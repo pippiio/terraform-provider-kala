@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: fmt / lint / test / build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Formatting
+        run: make fmt-check
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
+      # Unit tests only — they make no network calls. Acceptance tests are
+      # deferred until a sandbox tenant exists (see spec.md Non-Goals), so
+      # TF_ACC is deliberately unset here and no credentials are needed.
+      - name: Unit tests
+        run: make cover
+
+      - name: Build
+        run: make build
