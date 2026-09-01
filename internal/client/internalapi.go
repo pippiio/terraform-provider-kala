@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -15,10 +16,11 @@ import (
 // undocumented and unversioned, and it is the ONLY place employee activation
 // lives (ADR-002).
 //
-// Guardrail ARCH1.3 permits exactly one write here — SetValidated — and every
-// write must be verified by a read-back (ARCH1.8). Nomenclature differs from
-// webapiv2: this API says "worker" and keys on workerNr (ARCH1.4 keeps that
-// vocabulary confined to this file).
+// Guardrail ARCH1.3 permits exactly three writes here — SetValidated (ADR-002),
+// SignUp (employee creation), and SetEmailNew (email change) — and every write
+// must be verified by a read-back (ARCH1.8). Nomenclature differs from webapiv2:
+// this API says "worker" and keys on workerNr (ARCH1.4 keeps that vocabulary
+// confined to this file).
 
 const (
 	// DefaultInternalEndpoint is the base for the app's own API.
@@ -96,6 +98,10 @@ type InternalClient interface {
 	// page), which the retry policy treats as transient. Establish existence
 	// with GetWorker first.
 	GetWorkerInfo(ctx context.Context, workerNr int64) (WorkerInfo, error)
+
+	// SetWorkerEmail changes a worker's email via /api/SetEmailNew/ and verifies
+	// the result by reading it back (ARCH1.8).
+	SetWorkerEmail(ctx context.Context, workerNr int64, email string) error
 
 	// CreateWorker registers a new employee via /Api/SignUp/.
 	//
@@ -262,6 +268,11 @@ type wireSetValidatedRequest struct {
 // as workerNr (returned by /api/Workers) and as webapiv2's employeeNumber is
 // UNVERIFIED — see ARCH1.9. Creating an employee with a known medarbejderNr and
 // observing which workerNr appears is the experiment that would settle it.
+type wireSetEmailRequest struct {
+	WorkerNr int64  `json:"workerNr"`
+	Email    string `json:"email"`
+}
+
 type wireSignUpRequest struct {
 	MedarbejderNr int64  `json:"medarbejderNr"`
 	Email         string `json:"email"`
@@ -601,4 +612,44 @@ func (c *internalAPI) GetWorkerInfo(ctx context.Context, workerNr int64) (Worker
 		return WorkerInfo{}, fmt.Errorf("%w: worker info response: %v", ErrDecode, err)
 	}
 	return w.toDomain()
+}
+
+// SetWorkerEmail changes a worker's email address.
+//
+// Verified by read-back like every internal-API write (ARCH1.8): the endpoint
+// returning 200 is its claim, not proof. WorkerInfo is the confirmation, and it
+// is also the only place email is readable at all.
+func (c *internalAPI) SetWorkerEmail(ctx context.Context, workerNr int64, email string) error {
+	if email == "" {
+		return fmt.Errorf("email must not be empty")
+	}
+
+	token, companyID, err := c.session(ctx)
+	if err != nil {
+		return err
+	}
+
+	body, err := json.Marshal(wireSetEmailRequest{WorkerNr: workerNr, Email: email})
+	if err != nil {
+		return fmt.Errorf("kala: building SetEmail request: %w", err)
+	}
+
+	if _, err := c.request(ctx, http.MethodPost, "/api/SetEmailNew/", body, map[string]string{
+		"kauthtoken": token,
+		"kacompany":  strconv.FormatInt(companyID, 10),
+	}); err != nil {
+		return fmt.Errorf("kala: setting email for worker %d: %w", workerNr, err)
+	}
+
+	info, err := c.GetWorkerInfo(ctx, workerNr)
+	if err != nil {
+		return fmt.Errorf("kala: could not verify the email change for worker %d: %w", workerNr, err)
+	}
+	if !strings.EqualFold(info.Email, email) {
+		return fmt.Errorf(
+			"kala: SetEmail for worker %d reported success but the address reads back as %q, expected %q",
+			workerNr, info.Email, email)
+	}
+
+	return nil
 }

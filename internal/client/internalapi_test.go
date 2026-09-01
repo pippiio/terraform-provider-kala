@@ -446,3 +446,124 @@ func TestInternal_GetWorkerInfoNeedsCredentials(t *testing.T) {
 		t.Error("want a credentials error")
 	}
 }
+
+// --- SetEmailNew ----------------------------------------------------------
+
+// emailMock serves the handshake, SetEmailNew, and a WorkerInfo whose email
+// reflects (or deliberately fails to reflect) the write.
+func emailMock(t *testing.T, applyWrite bool, setStatus int) (InternalClient, *[]wireSetEmailRequest) {
+	t.Helper()
+	var calls []wireSetEmailRequest
+	current := "old@example.com"
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/Auth/SignIn/"):
+			_, _ = w.Write([]byte(`{"secureLoginToken":"t","companies":[{"id":17221}]}`))
+		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
+			_, _ = w.Write([]byte(`{"token":"session-token"}`))
+		case strings.HasSuffix(r.URL.Path, "/api/SetEmailNew/"):
+			if setStatus != 0 {
+				w.WriteHeader(setStatus)
+				return
+			}
+			if r.Header.Get("kacompany") == "" {
+				t.Error("SetEmailNew requires the kacompany header")
+			}
+			body := make([]byte, r.ContentLength)
+			_, _ = r.Body.Read(body)
+			var req wireSetEmailRequest
+			_ = json.Unmarshal(body, &req)
+			calls = append(calls, req)
+			if applyWrite {
+				current = req.Email
+			}
+			w.WriteHeader(http.StatusOK)
+		default: // WorkerInfo
+			_, _ = w.Write([]byte(`{"workerNr":3,"workerId":3,"email":"` + current + `"}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	return NewInternal(InternalConfig{
+		Endpoint: srv.URL, Username: "u", Password: "p", retryBaseDur: time.Microsecond,
+	}), &calls
+}
+
+func TestInternal_SetWorkerEmailSendsWorkerNrAndEmail(t *testing.T) {
+	c, calls := emailMock(t, true, 0)
+
+	if err := c.SetWorkerEmail(context.Background(), 3, "test2@archan.dk"); err != nil {
+		t.Fatalf("SetWorkerEmail: %v", err)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("want one call, got %d", len(*calls))
+	}
+	if (*calls)[0].WorkerNr != 3 || (*calls)[0].Email != "test2@archan.dk" {
+		t.Errorf("sent %+v", (*calls)[0])
+	}
+}
+
+// ARCH1.8: 200 OK is the endpoint's claim, not proof. A write that does not
+// take effect must fail.
+func TestInternal_SetWorkerEmailFailsWhenUnverified(t *testing.T) {
+	c, _ := emailMock(t, false, 0) // accepts the write, never applies it
+
+	err := c.SetWorkerEmail(context.Background(), 3, "new@example.com")
+	if err == nil {
+		t.Fatal("an unverified email change must fail")
+	}
+	if !strings.Contains(err.Error(), "reads back as") {
+		t.Errorf("error should report the read-back mismatch, got %q", err.Error())
+	}
+}
+
+// Kala may normalise case; a case-only difference is not a failure.
+func TestInternal_SetWorkerEmailAcceptsCaseDifference(t *testing.T) {
+	var current string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/Auth/SignIn/"):
+			_, _ = w.Write([]byte(`{"secureLoginToken":"t","companies":[{"id":1}]}`))
+		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
+			_, _ = w.Write([]byte(`{"token":"session-token"}`))
+		case strings.HasSuffix(r.URL.Path, "/api/SetEmailNew/"):
+			current = "TEST@ARCHAN.DK" // upstream upper-cases it
+			w.WriteHeader(http.StatusOK)
+		default:
+			_, _ = w.Write([]byte(`{"workerNr":3,"email":"` + current + `"}`))
+		}
+	}))
+	defer srv.Close()
+
+	c := NewInternal(InternalConfig{Endpoint: srv.URL, Username: "u", Password: "p", retryBaseDur: time.Microsecond})
+	if err := c.SetWorkerEmail(context.Background(), 3, "test@archan.dk"); err != nil {
+		t.Errorf("a case-only difference should be accepted: %v", err)
+	}
+}
+
+func TestInternal_SetWorkerEmailRejectsEmpty(t *testing.T) {
+	c, calls := emailMock(t, true, 0)
+
+	if err := c.SetWorkerEmail(context.Background(), 3, ""); err == nil {
+		t.Fatal("want a validation error before any request")
+	}
+	if len(*calls) != 0 {
+		t.Error("no request should be made for an empty email")
+	}
+}
+
+func TestInternal_SetWorkerEmailPropagatesHTTPFailure(t *testing.T) {
+	c, _ := emailMock(t, false, http.StatusForbidden)
+
+	if err := c.SetWorkerEmail(context.Background(), 3, "x@y.z"); err == nil {
+		t.Fatal("want the HTTP failure to surface")
+	}
+}
+
+func TestInternal_SetWorkerEmailNeedsCredentials(t *testing.T) {
+	c := NewInternal(InternalConfig{Endpoint: "https://example.test"})
+	if err := c.SetWorkerEmail(context.Background(), 1, "a@b.c"); err == nil {
+		t.Error("want a credentials error")
+	}
+}

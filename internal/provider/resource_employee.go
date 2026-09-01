@@ -90,9 +90,9 @@ func (r *employeeResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			},
 			"email": schema.StringAttribute{
 				Required: true,
-				MarkdownDescription: "Email address. Sent when the employee is created and refreshed from " +
-					"`WorkerInfo` on every read, so drift is detected. Kala exposes no endpoint to change " +
-					"an existing employee's email, so a change here warns rather than taking effect.",
+				MarkdownDescription: "Email address. Set at creation, refreshed from `WorkerInfo` on every " +
+					"read, and updated in place via `SetEmailNew` when changed — so this is a fully managed " +
+					"attribute with real drift detection.",
 			},
 			"active": schema.BoolAttribute{
 				Optional: true,
@@ -318,15 +318,10 @@ func (r *employeeResource) Update(ctx context.Context, req resource.UpdateReques
 	}
 
 	if plan.Email.ValueString() != state.Email.ValueString() {
-		resp.Diagnostics.AddWarning(
-			"Employee email cannot be changed through Kala's API",
-			fmt.Sprintf(
-				"The configuration changes employee %d's email from %q to %q, but Kala exposes no "+
-					"endpoint to update it — it is only accepted when the employee is created.\n\n"+
-					"The next read will refresh this attribute from Kala and the diff will reappear. "+
-					"Change the address in the Kala interface, or revert the configuration to match.",
-				number, state.Email.ValueString(), plan.Email.ValueString()),
-		)
+		if err := internal.SetWorkerEmail(ctx, number, plan.Email.ValueString()); err != nil {
+			resp.Diagnostics.AddError("Could not change the employee's email address", err.Error())
+			return
+		}
 	}
 
 	// Carry adoption status forward — it describes how the resource began.

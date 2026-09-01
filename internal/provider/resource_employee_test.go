@@ -27,6 +27,10 @@ type fakeInternal struct {
 	getWorkerErr  error
 	listWorkerErr error
 
+	// email write path
+	emailSet    []emailSetCall
+	setEmailErr error
+
 	// WorkerInfo enrichment
 	info      client.WorkerInfo
 	infoErr   error
@@ -37,6 +41,11 @@ type fakeInternal struct {
 type setValidatedCall struct {
 	number int64
 	value  bool
+}
+
+type emailSetCall struct {
+	number int64
+	email  string
 }
 
 func newFakeInternal(workers ...client.Worker) *fakeInternal {
@@ -77,6 +86,24 @@ func (f *fakeInternal) SetWorkerValidated(_ context.Context, nr int64, v bool) e
 	if w, ok := f.workers[nr]; ok {
 		w.IsValidated = v
 		f.workers[nr] = w
+	}
+	return nil
+}
+
+func (f *fakeInternal) SetWorkerEmail(_ context.Context, nr int64, email string) error {
+	f.emailSet = append(f.emailSet, emailSetCall{nr, email})
+	if f.setEmailErr != nil {
+		return f.setEmailErr
+	}
+	// Reflect the change so a subsequent enrichment read sees it.
+	if f.info.WorkerNr != 0 {
+		f.info.Email = email
+	}
+	if f.infoByNr != nil {
+		if i, ok := f.infoByNr[nr]; ok {
+			i.Email = email
+			f.infoByNr[nr] = i
+		}
 	}
 	return nil
 }
@@ -229,14 +256,17 @@ func TestEmployeeResource_SchemaDocumentsIrreversibleDestroy(t *testing.T) {
 		t.Error("the schema must document that an existing employee_number is adopted")
 	}
 
-	// Corrected 2026-09-01: email IS readable, via WorkerInfo. The schema must
-	// no longer claim otherwise, but must still say it cannot be changed.
+	// Corrected twice on 2026-09-01: email is readable (WorkerInfo) AND
+	// writable (SetEmailNew), so it is fully managed. Earlier descriptions
+	// claimed write-only, then read-only-after-create; both were wrong.
 	email := strings.ToLower(s.Attributes["email"].GetMarkdownDescription())
-	if strings.Contains(email, "write-only") {
-		t.Error("email is readable via WorkerInfo; the write-only claim is wrong")
+	for _, stale := range []string{"write-only", "no endpoint to change", "cannot be changed"} {
+		if strings.Contains(email, stale) {
+			t.Errorf("email description still carries the stale claim %q", stale)
+		}
 	}
-	if !strings.Contains(email, "no endpoint to change") {
-		t.Error("email must document that it cannot be updated after creation")
+	if !strings.Contains(email, "drift") {
+		t.Error("email should document that it is drift-detected")
 	}
 }
 
@@ -803,7 +833,7 @@ func TestUpdateEmployee_ActivationWriteFailurePropagates(t *testing.T) {
 	}
 }
 
-func TestUpdateEmployee_EmailChangeWarns(t *testing.T) {
+func TestUpdateEmployee_EmailChangeIsWritten(t *testing.T) {
 	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "X", IsValidated: true})
 	r := newEmployeeResource(fi)
 
@@ -815,17 +845,50 @@ func TestUpdateEmployee_EmailChangeWarns(t *testing.T) {
 		Plan: employeePlan(t, plan), State: employeeState(t, state),
 	}, resp)
 
-	if resp.Diagnostics.WarningsCount() == 0 {
-		t.Fatal("an email change must warn — it is only sent at creation")
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("update failed: %s", diagsText(resp.Diagnostics))
 	}
-	text := diagsText(resp.Diagnostics)
-	if !strings.Contains(text, "no endpoint to update it") {
-		t.Errorf("warning should explain why the change cannot take effect, got: %s", text)
+	if len(fi.emailSet) != 1 {
+		t.Fatalf("want one SetWorkerEmail call, got %+v", fi.emailSet)
 	}
-	// Since email is now refreshed from upstream, the diff will come back —
-	// the user needs to know that rather than assuming it settled.
-	if !strings.Contains(text, "diff will reappear") {
-		t.Errorf("warning should say the diff returns on the next read, got: %s", text)
+	if fi.emailSet[0].number != 3 || fi.emailSet[0].email != "new@example.com" {
+		t.Errorf("sent %+v, want {3 new@example.com}", fi.emailSet[0])
+	}
+}
+
+func TestUpdateEmployee_EmailUnchangedMakesNoWrite(t *testing.T) {
+	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "X", IsValidated: true})
+	r := newEmployeeResource(fi)
+
+	same := employeeModelFor(3, "X", "same@example.com", true)
+	resp := &resource.UpdateResponse{State: emptyEmployeeState(t)}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan: employeePlan(t, same), State: employeeState(t, same),
+	}, resp)
+
+	if len(fi.emailSet) != 0 {
+		t.Errorf("no email write expected, got %+v", fi.emailSet)
+	}
+}
+
+func TestUpdateEmployee_EmailWriteFailurePropagates(t *testing.T) {
+	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "X", IsValidated: true})
+	fi.setEmailErr = errors.New("rejected by Kala")
+	r := newEmployeeResource(fi)
+
+	state := employeeModelFor(3, "X", "old@example.com", true)
+	plan := employeeModelFor(3, "X", "new@example.com", true)
+
+	resp := &resource.UpdateResponse{State: emptyEmployeeState(t)}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan: employeePlan(t, plan), State: employeeState(t, state),
+	}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a failed email change must fail the apply, not warn")
+	}
+	if !strings.Contains(diagsText(resp.Diagnostics), "rejected by Kala") {
+		t.Errorf("error should carry the cause: %s", diagsText(resp.Diagnostics))
 	}
 }
 
