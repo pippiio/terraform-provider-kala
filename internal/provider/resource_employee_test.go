@@ -217,6 +217,12 @@ func (f *fakeInternal) CreateWorker(_ context.Context, in client.NewWorker) (cli
 	return w, nil
 }
 
+// ListCustomers is not exercised by the employee resource; it exists so
+// fakeInternal continues to satisfy the widened InternalClient interface.
+func (f *fakeInternal) ListCustomers(context.Context, client.CustomerQuery) (client.CustomerScan, error) {
+	return client.CustomerScan{}, nil
+}
+
 var _ client.InternalClient = (*fakeInternal)(nil)
 
 func newEmployeeResource(fi *fakeInternal) *employeeResource {

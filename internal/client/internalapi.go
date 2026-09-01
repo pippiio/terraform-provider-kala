@@ -139,6 +139,9 @@ type InternalClient interface {
 	// This is the ONLY way to create an employee in Kala — webapiv2 has no
 	// equivalent. It is verified by read-back like every internal-API write.
 	CreateWorker(ctx context.Context, in NewWorker) (Worker, error)
+
+	// ListCustomers reads customers, reporting how much of the account it covered.
+	ListCustomers(ctx context.Context, q CustomerQuery) (CustomerScan, error)
 }
 
 // WorkerInfo is the detailed worker record from /api/WorkerInfo.
