@@ -179,8 +179,9 @@ func TestListSettingKeys_EmptyAccount(t *testing.T) {
 func TestClosestKey_SuggestsNearMiss(t *testing.T) {
 	existing := []string{"default_work_type", "can_approve_hours", "beta_ui"}
 
-	// The exact scenario the guard exists for.
-	if got := ClosestKey("defualt_work_type", existing); got != "default_work_type" {
+	// The exact scenario the guard exists for: a transposed "default".
+	// The misspelling is deliberate test data, hence the nolint.
+	if got := ClosestKey("defualt_work_type", existing); got != "default_work_type" { //nolint:misspell // intentional typo under test
 		t.Errorf("ClosestKey = %q, want default_work_type", got)
 	}
 	if got := ClosestKey("can_aprove_hours", existing); got != "can_approve_hours" {

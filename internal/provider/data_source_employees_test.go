@@ -22,6 +22,15 @@ type fakeClient struct {
 	listErr     error
 	getEmployee client.Employee
 	getErr      error
+
+	// settings write path
+	appliedNumber int64
+	appliedSet    client.Setting
+	appliedMeta   client.SettingMetadata
+	applyCalled   bool
+	applyErr      error
+	settingKeys   []string
+	keysErr       error
 }
 
 func (f *fakeClient) Ping(context.Context) error {
@@ -37,6 +46,16 @@ func (f *fakeClient) ListEmployees(_ context.Context, opts client.ListOptions) (
 
 func (f *fakeClient) GetEmployee(context.Context, int64) (client.Employee, error) {
 	return f.getEmployee, f.getErr
+}
+
+func (f *fakeClient) ApplyEmployeeSetting(_ context.Context, n int64, s client.Setting, m client.SettingMetadata) error {
+	f.applyCalled = true
+	f.appliedNumber, f.appliedSet, f.appliedMeta = n, s, m
+	return f.applyErr
+}
+
+func (f *fakeClient) ListSettingKeys(context.Context) ([]string, error) {
+	return f.settingKeys, f.keysErr
 }
 
 var _ client.Client = (*fakeClient)(nil)

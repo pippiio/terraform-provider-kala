@@ -112,8 +112,8 @@ func (c *webAPIv2) ListSettingKeys(ctx context.Context) ([]string, error) {
 // "" when nothing is close enough to be a useful suggestion.
 //
 // Exported because the provider layer surfaces it in the unknown-key diagnostic:
-// "default_work_type" against a typed "defualt_work_type" is the difference
-// between a caught mistake and a permanent one.
+// a transposed "default_work_type" is the difference between a caught mistake
+// and a permanent one, since settings cannot be deleted.
 func ClosestKey(input string, candidates []string) string {
 	best := ""
 	bestDist := closestKeyMaxDistance + 1
