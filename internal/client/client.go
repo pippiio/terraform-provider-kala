@@ -32,6 +32,16 @@ type Client interface {
 	// It returns an error satisfying errors.Is(err, ErrNotFound) when no such
 	// employee exists.
 	GetEmployee(ctx context.Context, number int64) (Employee, error)
+
+	// ApplyEmployeeSetting creates or updates one setting on one employee.
+	//
+	// There is no corresponding delete: Kala offers no way to remove a setting,
+	// only to overwrite its value. Callers should validate the key first.
+	ApplyEmployeeSetting(ctx context.Context, employeeNumber int64, s Setting, meta SettingMetadata) error
+
+	// ListSettingKeys returns every setting key in use across the account,
+	// sorted and deduplicated. It backs the unknown-key guard.
+	ListSettingKeys(ctx context.Context) ([]string, error)
 }
 
 // Employee is the provider-owned representation of a person in Kala.

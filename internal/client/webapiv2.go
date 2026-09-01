@@ -99,6 +99,16 @@ func authParam(endpoint string) string {
 // transport failures. The body is read fully only on 2xx; on any other status
 // the body is sampled for context but never decoded (risk R6).
 func (c *webAPIv2) get(ctx context.Context, endpoint string, params url.Values) ([]byte, error) {
+	return c.do(ctx, http.MethodGet, endpoint, params)
+}
+
+// post performs a POST against an endpoint. The Kala API takes parameters in the
+// query string even for writes (see SetEmployeeSetting), so the body is empty.
+func (c *webAPIv2) post(ctx context.Context, endpoint string, params url.Values) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, endpoint, params)
+}
+
+func (c *webAPIv2) do(ctx context.Context, method, endpoint string, params url.Values) ([]byte, error) {
 	if params == nil {
 		params = url.Values{}
 	}
@@ -117,7 +127,7 @@ func (c *webAPIv2) get(ctx context.Context, endpoint string, params url.Values) 
 			return nil, err
 		}
 
-		body, err := c.attempt(ctx, target)
+		body, err := c.attempt(ctx, method, target)
 		if err == nil {
 			return body, nil
 		}
@@ -138,9 +148,9 @@ func (c *webAPIv2) get(ctx context.Context, endpoint string, params url.Values) 
 }
 
 // attempt performs exactly one HTTP request.
-func (c *webAPIv2) attempt(ctx context.Context, target string) ([]byte, error) {
+func (c *webAPIv2) attempt(ctx context.Context, method, target string) ([]byte, error) {
 	// Context-carrying request so Terraform cancellation propagates (GO1.5).
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	req, err := http.NewRequestWithContext(ctx, method, target, nil)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrTransport, sanitizeError(err))
 	}
