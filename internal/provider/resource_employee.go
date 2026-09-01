@@ -680,3 +680,6 @@ func applyWorker(m *employeeResourceModel, w client.Worker) {
 		m.Adopted = types.BoolValue(false)
 	}
 }
+
+// resolveUnknowns replaces unknown values with null. Not yet implemented.
+func resolveUnknowns(_ *employeeResourceModel) {}

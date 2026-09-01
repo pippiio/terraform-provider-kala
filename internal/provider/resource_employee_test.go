@@ -1543,3 +1543,183 @@ func TestCreateEmployee_GenuineCreateDoesNotRewriteEmail(t *testing.T) {
 		t.Errorf("SignUp already set the email; a second write is redundant, got %+v", fi.emailSet)
 	}
 }
+
+// --- F3: a partial create must not strand a permanent record --------------
+//
+// Kala has no delete. If Create errors after SignUp succeeded and Terraform
+// holds no state, the employee is stranded: Terraform will not manage it, will
+// not destroy it, and the next apply silently adopts it instead of creating it.
+// State must be written on every failure path that runs after the record
+// exists, and the diagnostics must name the number that now exists.
+
+// stateWritten reports whether Create left a usable state object behind.
+func stateWritten(t *testing.T, s tfsdk.State) (employeeResourceModel, bool) {
+	t.Helper()
+	if s.Raw.IsNull() || !s.Raw.IsKnown() {
+		return employeeResourceModel{}, false
+	}
+	var m employeeResourceModel
+	if diags := s.Get(context.Background(), &m); diags.HasError() {
+		return employeeResourceModel{}, false
+	}
+	return m, true
+}
+
+func TestCreateEmployee_FieldWriteFailureStillRecordsTheEmployee(t *testing.T) {
+	fi := newFakeInternal()
+	fi.fieldErr = errors.New("kala rejected the title")
+	r := newEmployeeResource(fi)
+
+	m := employeeModelFor(50, "Radagast the Brown", "radagast@example.com", true)
+	m.Title = types.StringValue("Wizard")
+	resp := &resource.CreateResponse{State: emptyEmployeeState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: employeePlan(t, m)}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("want an error when a field write fails")
+	}
+	if !fi.createCalled {
+		t.Fatal("precondition: the employee should have been created")
+	}
+
+	got, ok := stateWritten(t, resp.State)
+	if !ok {
+		t.Fatal("employee was created in Kala but no state was written — the record is stranded")
+	}
+	if got.EmployeeNumber.ValueInt64() != 50 {
+		t.Errorf("state records employee %d, want 50", got.EmployeeNumber.ValueInt64())
+	}
+}
+
+func TestCreateEmployee_DeactivationFailureStillRecordsTheEmployee(t *testing.T) {
+	fi := newFakeInternal()
+	fi.setValidErr = errors.New("kala refused")
+	r := newEmployeeResource(fi)
+
+	m := employeeModelFor(51, "Radagast the Brown", "radagast@example.com", false)
+	resp := &resource.CreateResponse{State: emptyEmployeeState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: employeePlan(t, m)}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("want an error when deactivation fails")
+	}
+	if _, ok := stateWritten(t, resp.State); !ok {
+		t.Fatal("employee was created in Kala but no state was written — the record is stranded")
+	}
+}
+
+func TestCreateEmployee_ReadBackFailureStillRecordsTheEmployee(t *testing.T) {
+	// Not-found on the pre-flight lookup, then a hard failure on every read
+	// after creation. The record exists in Kala either way.
+	fi := &failAfterCreate{fakeInternal: newFakeInternal()}
+	r := &employeeResource{clients: &providerClients{Web: &fakeClient{}, Internal: fi}}
+
+	m := employeeModelFor(52, "Radagast the Brown", "radagast@example.com", true)
+	resp := &resource.CreateResponse{State: emptyEmployeeState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: employeePlan(t, m)}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("want an error when the read-back fails")
+	}
+	if _, ok := stateWritten(t, resp.State); !ok {
+		t.Fatal("employee was created in Kala but no state was written — the record is stranded")
+	}
+}
+
+func TestCreateEmployee_PartialCreateWarningNamesTheEmployeeAndSaysItIsPermanent(t *testing.T) {
+	fi := newFakeInternal()
+	fi.fieldErr = errors.New("kala rejected the title")
+	r := newEmployeeResource(fi)
+
+	m := employeeModelFor(53, "Radagast the Brown", "radagast@example.com", true)
+	m.Title = types.StringValue("Wizard")
+	resp := &resource.CreateResponse{State: emptyEmployeeState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: employeePlan(t, m)}, resp)
+
+	text := diagsText(resp.Diagnostics)
+	for _, want := range []string{"53", "cannot be deleted", "apply again"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("diagnostics do not mention %q:\n%s", want, text)
+		}
+	}
+}
+
+// Adoption is the milder case — the employee pre-existed, so nothing new is
+// stranded — but state must still be written, or the reactivation this resource
+// performed goes unrecorded and the next plan is computed against nothing.
+func TestCreateEmployee_AdoptionFailureStillRecordsTheEmployee(t *testing.T) {
+	fi := newFakeInternal(client.Worker{WorkerNr: 54, Name: "Radagast the Brown", IsValidated: true})
+	fi.fieldErr = errors.New("kala rejected the title")
+	r := newEmployeeResource(fi)
+
+	m := employeeModelFor(54, "Radagast the Brown", "radagast@example.com", true)
+	m.Title = types.StringValue("Wizard")
+	resp := &resource.CreateResponse{State: emptyEmployeeState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: employeePlan(t, m)}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("want an error when a field write fails")
+	}
+	got, ok := stateWritten(t, resp.State)
+	if !ok {
+		t.Fatal("no state written for an adopted employee")
+	}
+	if !got.Adopted.ValueBool() {
+		t.Error("state should record that the employee was adopted")
+	}
+}
+
+// A model bound for state must carry no unknown values: the framework rejects
+// a Computed attribute left unknown after apply. When the post-failure refresh
+// cannot reach Kala, null is the honest substitute — it says Terraform does not
+// know, and the next Read fills it in.
+func TestResolveUnknowns_ReplacesEveryUnknownWithNull(t *testing.T) {
+	m := employeeResourceModel{
+		EmployeeNumber:     types.Int64Value(55),
+		Name:               types.StringValue("Radagast the Brown"),
+		Email:              types.StringValue("radagast@example.com"),
+		Active:             types.BoolUnknown(),
+		SendWelcomeEmail:   types.BoolUnknown(),
+		Title:              types.StringUnknown(),
+		Phone:              types.StringUnknown(),
+		PrivatePhone:       types.StringUnknown(),
+		Department:         types.StringUnknown(),
+		Initials:           types.StringUnknown(),
+		LicensePlate:       types.StringUnknown(),
+		DateOfEmployment:   types.StringUnknown(),
+		FlexStartDate:      types.StringUnknown(),
+		NormHours:          types.StringUnknown(),
+		LeaderNote:         types.StringUnknown(),
+		IsLeader:           types.BoolUnknown(),
+		IsPlanner:          types.BoolUnknown(),
+		IsSuperUser:        types.BoolUnknown(),
+		IsFinance:          types.BoolUnknown(),
+		IsVisibleInPlanner: types.BoolUnknown(),
+		WorkerID:           types.Int64Unknown(),
+		Adopted:            types.BoolUnknown(),
+	}
+
+	resolveUnknowns(&m)
+
+	for name, unknown := range map[string]bool{
+		"active": m.Active.IsUnknown(), "send_welcome_email": m.SendWelcomeEmail.IsUnknown(),
+		"title": m.Title.IsUnknown(), "phone": m.Phone.IsUnknown(),
+		"private_phone": m.PrivatePhone.IsUnknown(), "department": m.Department.IsUnknown(),
+		"initials": m.Initials.IsUnknown(), "license_plate": m.LicensePlate.IsUnknown(),
+		"date_of_employment": m.DateOfEmployment.IsUnknown(), "flex_start_date": m.FlexStartDate.IsUnknown(),
+		"norm_hours": m.NormHours.IsUnknown(), "leader_note": m.LeaderNote.IsUnknown(),
+		"is_leader": m.IsLeader.IsUnknown(), "is_planner": m.IsPlanner.IsUnknown(),
+		"is_super_user": m.IsSuperUser.IsUnknown(), "is_finance": m.IsFinance.IsUnknown(),
+		"is_visible_in_planner": m.IsVisibleInPlanner.IsUnknown(),
+		"worker_id":             m.WorkerID.IsUnknown(), "adopted": m.Adopted.IsUnknown(),
+	} {
+		if unknown {
+			t.Errorf("%s is still unknown", name)
+		}
+	}
+
+	// Known values must survive untouched.
+	if m.EmployeeNumber.ValueInt64() != 55 || m.Name.ValueString() != "Radagast the Brown" {
+		t.Error("resolveUnknowns altered a known value")
+	}
+}
