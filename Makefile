@@ -1,7 +1,7 @@
 BINARY := terraform-provider-kala
 COVER_PROFILE := coverage.out
 
-.PHONY: build test cover lint fmt fmt-check clean help
+.PHONY: build test cover cover-html lint fmt fmt-check install-mirror release-check clean help
 
 ## build: compile the provider binary
 build:
@@ -35,6 +35,21 @@ fmt-check:
 		echo "Unformatted files:"; echo "$$unformatted"; exit 1; \
 	fi
 	@echo "All files formatted."
+
+## install-mirror: build and install into Terraform's filesystem mirror for local use
+##                 (VERSION defaults to 0.0.0-dev)
+install-mirror: build
+	@VERSION=$${VERSION:-0.0.0-dev}; \
+	PLATFORM=$$(go env GOOS)_$$(go env GOARCH); \
+	DEST=$$HOME/.terraform.d/plugins/registry.terraform.io/techchapter/kala/$$VERSION/$$PLATFORM; \
+	mkdir -p $$DEST; \
+	cp $(BINARY) $$DEST/$(BINARY)_v$$VERSION; \
+	echo "installed $$DEST/$(BINARY)_v$$VERSION"
+
+## release-check: validate .goreleaser.yml and dry-run the release build
+release-check:
+	goreleaser check
+	goreleaser build --snapshot --clean --single-target
 
 ## clean: remove build and coverage artifacts
 clean:

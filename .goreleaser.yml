@@ -1,0 +1,116 @@
+version: 2
+
+# Terraform provider release build.
+#
+# The artifact layout follows the Terraform Registry protocol even though this
+# provider is distributed privately: matching the convention is what lets
+# consumers use a filesystem or network mirror today, and lets the provider move
+# to a registry later without changing how it is packaged.
+#
+# See docs/private-distribution.md for how consumers install these artifacts.
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - env:
+      # A statically linked binary — Terraform loads the provider as a
+      # subprocess on whatever host it runs on, which may not share our libc.
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - '-s -w -X main.version={{.Version}}'
+    goos:
+      - linux
+      - darwin
+      - windows
+      - freebsd
+    goarch:
+      - amd64
+      - arm64
+      - '386'
+      - arm
+    # A single ARM variant only. Terraform's platform naming has no v6/v7
+    # distinction — both would produce an identical linux_arm archive name and
+    # collide. GOARM=6 is the more compatible of the two.
+    goarm:
+      - '6'
+    ignore:
+      # Combinations Terraform does not publish and nobody runs.
+      - goos: darwin
+        goarch: '386'
+      - goos: darwin
+        goarch: arm
+      - goos: windows
+        goarch: arm64
+      - goos: windows
+        goarch: arm
+    binary: '{{ .ProjectName }}_v{{ .Version }}'
+
+archives:
+  # The registry protocol requires this exact name shape, and the filesystem
+  # mirror layout is derived from it.
+  - formats: [zip]
+    name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
+    # Binary only. Terraform extracts the archive straight into the plugin
+    # directory, so a bundled README would just litter it.
+    #
+    # An empty list is treated as "unset" and falls back to GoReleaser's
+    # defaults (README, LICENSE, CHANGELOG), so this uses a glob that matches
+    # nothing instead — the documented way to opt out entirely.
+    files:
+      - 'none*' 
+
+checksum:
+  name_template: '{{ .ProjectName }}_{{ .Version }}_SHA256SUMS'
+  algorithm: sha256
+
+signs:
+  # Detached signature over the checksum file. Required by the public registry;
+  # for private distribution it is what lets consumers verify an artifact came
+  # from us rather than from whoever could write to the release.
+  #
+  # Skipped automatically when no GPG key is configured — see the release
+  # workflow. Releases are usable without it, just unverifiable.
+  - artifacts: checksum
+    args:
+      - '--batch'
+      - '--local-user'
+      - '{{ .Env.GPG_FINGERPRINT }}'
+      - '--output'
+      - '${signature}'
+      - '--detach-sign'
+      - '${artifact}'
+
+release:
+  # Draft so a human decides when the release is public, matching the
+  # draft-PR convention this repo already uses.
+  draft: true
+  prerelease: auto
+  name_template: 'v{{ .Version }}'
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - '^test:'
+      - '^chore:'
+      - '^ci:'
+      - '^style:'
+      - Merge pull request
+      - Merge branch
+  groups:
+    - title: Features
+      regexp: '^feat'
+      order: 0
+    - title: Fixes
+      regexp: '^fix'
+      order: 1
+    - title: Documentation
+      regexp: '^docs'
+      order: 2
+    - title: Other
+      order: 99

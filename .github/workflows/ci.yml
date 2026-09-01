@@ -13,8 +13,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
-    name: fmt / lint / test / build
+  check:
+    name: fmt / lint / test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,11 +32,84 @@ jobs:
         with:
           version: latest
 
-      # Unit tests only — they make no network calls. Acceptance tests are
-      # deferred until a sandbox tenant exists (see spec.md Non-Goals), so
-      # TF_ACC is deliberately unset here and no credentials are needed.
+      # Unit tests only — they make no network calls and need no credentials.
+      # Acceptance tests are deferred until a sandbox tenant exists (see the
+      # track spec's Non-Goals), so TF_ACC stays unset here.
       - name: Unit tests
         run: make cover
 
+      # The suite must not depend on a developer's environment leaking in.
+      # Running with every KALA_* variable cleared is what proves the
+      # integration tests skip rather than fail.
+      - name: Unit tests without credentials
+        env:
+          KALA_API_KEY: ''
+          KALA_USERNAME: ''
+          KALA_PASSWORD: ''
+          KALA_ENDPOINT: ''
+        run: go test ./... -count=1
+
+      - name: Race detector
+        run: go test ./... -race -count=1
+
+  build:
+    name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Mirrors the release matrix in .goreleaser.yml. Building every target
+        # on every PR is what stops a cross-compilation break from surfacing at
+        # tag time, when it is most disruptive.
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: linux, goarch: '386' }
+          - { goos: linux, goarch: arm }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+          - { goos: windows, goarch: '386' }
+          - { goos: freebsd, goarch: amd64 }
+          - { goos: freebsd, goarch: arm64 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
       - name: Build
-        run: make build
+        env:
+          CGO_ENABLED: '0'
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build -trimpath -o /dev/null .
+
+  release-config:
+    name: validate release config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Catches a broken .goreleaser.yml on the PR that changes it, rather than
+      # on the tag that needs it to work.
+      - name: Check goreleaser config
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: '~> v2'
+          args: check
+
+      - name: Dry-run the release build
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: '~> v2'
+          args: build --snapshot --clean --single-target
