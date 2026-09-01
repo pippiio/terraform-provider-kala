@@ -31,6 +31,10 @@ type fakeInternal struct {
 	emailSet    []emailSetCall
 	setEmailErr error
 
+	// welcome email
+	welcomeSent []string
+	welcomeErr  error
+
 	// field writes
 	fieldSets []fieldSetCall
 	roleSets  []roleSetCall
@@ -122,6 +126,11 @@ func (f *fakeInternal) SetWorkerEmail(_ context.Context, nr int64, email string)
 		}
 	}
 	return nil
+}
+
+func (f *fakeInternal) SendWelcomeEmail(_ context.Context, email string) error {
+	f.welcomeSent = append(f.welcomeSent, email)
+	return f.welcomeErr
 }
 
 func (f *fakeInternal) SetWorkerField(_ context.Context, _ int64, field client.WorkerField, v string) error {
@@ -216,6 +225,7 @@ func employeeValue(t *testing.T, m employeeResourceModel) tftypes.Value {
 		"name":                  tftypes.NewValue(tftypes.String, m.Name.ValueString()),
 		"email":                 tftypes.NewValue(tftypes.String, m.Email.ValueString()),
 		"active":                tftypes.NewValue(tftypes.Bool, m.Active.ValueBool()),
+		"send_welcome_email":    tftypes.NewValue(tftypes.Bool, bl(m.SendWelcomeEmail)),
 		"title":                 tftypes.NewValue(tftypes.String, str(m.Title)),
 		"phone":                 tftypes.NewValue(tftypes.String, str(m.Phone)),
 		"private_phone":         tftypes.NewValue(tftypes.String, str(m.PrivatePhone)),
@@ -253,10 +263,11 @@ func emptyEmployeeState(t *testing.T) tfsdk.State {
 
 func employeeModelFor(number int64, name, email string, active bool) employeeResourceModel {
 	return employeeResourceModel{
-		EmployeeNumber: types.Int64Value(number),
-		Name:           types.StringValue(name),
-		Email:          types.StringValue(email),
-		Active:         types.BoolValue(active),
+		EmployeeNumber:   types.Int64Value(number),
+		Name:             types.StringValue(name),
+		Email:            types.StringValue(email),
+		Active:           types.BoolValue(active),
+		SendWelcomeEmail: types.BoolValue(true),
 		// Undeclared Optional+Computed attributes are null in a real plan, not
 		// empty strings — the distinction is what stops the provider blanking
 		// fields on an adopted employee.
@@ -1335,5 +1346,118 @@ func TestCreateEmployee_ExplicitFalseRoleIsWritten(t *testing.T) {
 
 	if len(fi.roleSets) != 1 || fi.roleSets[0].value {
 		t.Errorf("an explicit false must be written as a revoke, got %+v", fi.roleSets)
+	}
+}
+
+// --- welcome email --------------------------------------------------------
+
+func TestCreateEmployee_SendsWelcomeEmailOnGenuineCreation(t *testing.T) {
+	fi := newFakeInternal()
+	r := newEmployeeResource(fi)
+
+	m := employeeModelFor(30, "New Hire", "hire@example.com", true)
+	resp := &resource.CreateResponse{State: emptyEmployeeState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: employeePlan(t, m)}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("create failed: %s", diagsText(resp.Diagnostics))
+	}
+	if len(fi.welcomeSent) != 1 || fi.welcomeSent[0] != "hire@example.com" {
+		t.Errorf("want one welcome email to hire@example.com, got %v", fi.welcomeSent)
+	}
+}
+
+// The important half: adopting an existing person must NOT mail them. They
+// were onboarded long ago, and the email cannot be recalled.
+func TestCreateEmployee_NoWelcomeEmailWhenAdopting(t *testing.T) {
+	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "Existing", IsValidated: true})
+	r := newEmployeeResource(fi)
+
+	m := employeeModelFor(3, "Existing", "existing@example.com", true)
+	resp := &resource.CreateResponse{State: emptyEmployeeState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: employeePlan(t, m)}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("adopt failed: %s", diagsText(resp.Diagnostics))
+	}
+	if len(fi.welcomeSent) != 0 {
+		t.Errorf("adoption must not email an already-onboarded person, got %v", fi.welcomeSent)
+	}
+}
+
+func TestCreateEmployee_NoWelcomeEmailWhenReactivating(t *testing.T) {
+	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "Returning", IsValidated: false})
+	r := newEmployeeResource(fi)
+
+	m := employeeModelFor(3, "Returning", "returning@example.com", true)
+	resp := &resource.CreateResponse{State: emptyEmployeeState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: employeePlan(t, m)}, resp)
+
+	if len(fi.welcomeSent) != 0 {
+		t.Errorf("reactivation must not send a welcome email, got %v", fi.welcomeSent)
+	}
+}
+
+func TestCreateEmployee_WelcomeEmailCanBeDisabled(t *testing.T) {
+	fi := newFakeInternal()
+	r := newEmployeeResource(fi)
+
+	m := employeeModelFor(31, "Silent", "silent@example.com", true)
+	m.SendWelcomeEmail = types.BoolValue(false)
+
+	resp := &resource.CreateResponse{State: emptyEmployeeState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: employeePlan(t, m)}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("create failed: %s", diagsText(resp.Diagnostics))
+	}
+	if !fi.createCalled {
+		t.Error("the employee should still be created")
+	}
+	if len(fi.welcomeSent) != 0 {
+		t.Errorf("send_welcome_email = false must suppress the email, got %v", fi.welcomeSent)
+	}
+}
+
+// The employee exists and is configured; only the mail failed. Failing the
+// apply would abandon state for a record that was created successfully.
+func TestCreateEmployee_WelcomeEmailFailureWarnsButSucceeds(t *testing.T) {
+	fi := newFakeInternal()
+	fi.welcomeErr = errors.New("smtp rejected")
+	r := newEmployeeResource(fi)
+
+	m := employeeModelFor(32, "New", "new@example.com", true)
+	resp := &resource.CreateResponse{State: emptyEmployeeState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: employeePlan(t, m)}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("a failed email must not fail the apply: %s", diagsText(resp.Diagnostics))
+	}
+	if resp.Diagnostics.WarningsCount() == 0 {
+		t.Fatal("a failed email must warn")
+	}
+
+	text := diagsText(resp.Diagnostics)
+	if !strings.Contains(text, "new@example.com") {
+		t.Errorf("the warning should name the address so it can be sent by hand: %s", text)
+	}
+	if !strings.Contains(text, "send_welcome_email = false") {
+		t.Errorf("the warning should mention the opt-out: %s", text)
+	}
+}
+
+func TestEmployeeSchema_WelcomeEmailIsDocumentedAsCreateOnly(t *testing.T) {
+	s := employeeSchema(t)
+
+	attr, ok := s.Attributes["send_welcome_email"]
+	if !ok {
+		t.Fatal("send_welcome_email attribute missing")
+	}
+	desc := strings.ToLower(attr.GetMarkdownDescription())
+	if !strings.Contains(desc, "adopt") {
+		t.Error("must document that adoption does not send the email")
+	}
+	if !strings.Contains(desc, "cannot be undone") {
+		t.Error("must warn that sending mail is irreversible")
 	}
 }

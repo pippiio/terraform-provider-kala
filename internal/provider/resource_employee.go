@@ -37,10 +37,11 @@ type employeeResource struct {
 }
 
 type employeeResourceModel struct {
-	EmployeeNumber types.Int64  `tfsdk:"employee_number"`
-	Name           types.String `tfsdk:"name"`
-	Email          types.String `tfsdk:"email"`
-	Active         types.Bool   `tfsdk:"active"`
+	EmployeeNumber   types.Int64  `tfsdk:"employee_number"`
+	Name             types.String `tfsdk:"name"`
+	Email            types.String `tfsdk:"email"`
+	Active           types.Bool   `tfsdk:"active"`
+	SendWelcomeEmail types.Bool   `tfsdk:"send_welcome_email"`
 
 	// Computed, read from the internal API's WorkerInfo endpoint.
 	Title              types.String `tfsdk:"title"`
@@ -96,6 +97,18 @@ func (r *employeeResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				MarkdownDescription: "Email address. Set at creation, refreshed from `WorkerInfo` on every " +
 					"read, and updated in place via `SetEmailNew` when changed — so this is a fully managed " +
 					"attribute with real drift detection.",
+			},
+			"send_welcome_email": schema.BoolAttribute{
+				Optional: true,
+				Computed: true,
+				Default:  booldefault.StaticBool(true),
+				MarkdownDescription: "Send Kala's onboarding email when this resource **creates** a new " +
+					"employee. Defaults to `true`.\n\n" +
+					"It is never sent when an existing `employee_number` is adopted or reactivated — those " +
+					"people have been onboarded already. Because sending mail reaches a real person and " +
+					"cannot be undone, set this to `false` for migrations, imports, or test runs.\n\n" +
+					"This only takes effect at creation; changing it afterwards does nothing.",
+				PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
 			},
 			"active": schema.BoolAttribute{
 				Optional: true,
@@ -263,6 +276,28 @@ func (r *employeeResource) Create(ctx context.Context, req resource.CreateReques
 			if err := internal.SetWorkerValidated(ctx, number, false); err != nil {
 				resp.Diagnostics.AddError("Employee was created but could not be deactivated", err.Error())
 				return
+			}
+		}
+
+		// Welcome email — genuine creation only. An adopted employee has been
+		// onboarded already, and mailing them again would be confusing at best.
+		if plan.SendWelcomeEmail.ValueBool() {
+			if err := internal.SendWelcomeEmail(ctx, plan.Email.ValueString()); err != nil {
+				// The employee exists and is configured; only the email failed.
+				// Failing the apply here would abandon state for a record that
+				// was created successfully, so this warns instead — but says
+				// plainly that it must be sent by hand.
+				resp.Diagnostics.AddWarning(
+					"Employee created, but the welcome email could not be sent",
+					fmt.Sprintf(
+						"Employee %d was created successfully and Terraform will record it, but Kala "+
+							"rejected the welcome email to %q.\n\nSend it from the Kala interface, or "+
+							"set send_welcome_email = false to stop Terraform attempting it.\n\nError: %s",
+						number, plan.Email.ValueString(), err.Error()),
+				)
+			} else {
+				tflog.Debug(ctx, "sent welcome email for new employee",
+					map[string]any{"employee_number": number})
 			}
 		}
 

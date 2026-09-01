@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -334,5 +335,139 @@ func TestPostJSON_MarshalFailureIsReported(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "building request") {
 		t.Errorf("error should name the stage, got %q", err.Error())
+	}
+}
+
+// --- welcome email --------------------------------------------------------
+
+func TestSendWelcomeEmail_UsesFormEncodingNotJSON(t *testing.T) {
+	var gotContentType, gotBody string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/Auth/SignIn/"):
+			_, _ = w.Write([]byte(`{"secureLoginToken":"t","companies":[{"id":17221}]}`))
+		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
+			_, _ = w.Write([]byte(`{"token":"session-token"}`))
+		default:
+			gotContentType = r.Header.Get("Content-Type")
+			body := make([]byte, r.ContentLength)
+			_, _ = r.Body.Read(body)
+			gotBody = string(body)
+			if r.Header.Get("kauthtoken") == "" {
+				t.Error("welcome email requires kauthtoken")
+			}
+			_, _ = w.Write([]byte(`{"status":true}`))
+		}
+	}))
+	defer srv.Close()
+
+	c := NewInternal(InternalConfig{
+		Endpoint: srv.URL, Username: "u", Password: "p", retryBaseDur: time.Microsecond,
+	})
+	if err := c.SendWelcomeEmail(context.Background(), "test@archan.dk"); err != nil {
+		t.Fatalf("SendWelcomeEmail: %v", err)
+	}
+
+	// This endpoint is the odd one out: form-encoded, not JSON.
+	if !strings.HasPrefix(gotContentType, "application/x-www-form-urlencoded") {
+		t.Errorf("Content-Type = %q, want form encoding", gotContentType)
+	}
+	if gotBody != "email=test%40archan.dk" {
+		t.Errorf("body = %q, want the URL-encoded email", gotBody)
+	}
+}
+
+// The other JSON endpoints must keep their JSON Content-Type.
+func TestOtherEndpointsStillUseJSON(t *testing.T) {
+	var gotContentType string
+	m := newFieldMock(t)
+	m.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/Auth/SignIn/"):
+			_, _ = w.Write([]byte(`{"secureLoginToken":"t","companies":[{"id":1}]}`))
+		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
+			_, _ = w.Write([]byte(`{"token":"session-token"}`))
+		case strings.Contains(r.URL.Path, "WorkerInfo"):
+			_, _ = w.Write([]byte(`{"workerNr":3,"phone":"x"}`))
+		default:
+			gotContentType = r.Header.Get("Content-Type")
+			w.WriteHeader(http.StatusOK)
+		}
+	})
+
+	_ = m.client().SetWorkerField(context.Background(), 3, FieldPhone, "x")
+	if !strings.HasPrefix(gotContentType, "application/json") {
+		t.Errorf("Content-Type = %q, want JSON", gotContentType)
+	}
+}
+
+// Sending mail leaves nothing to read back, so the endpoint's own status field
+// is the only confirmation there is — a false must not pass silently.
+func TestSendWelcomeEmail_StatusFalseIsAnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/Auth/SignIn/"):
+			_, _ = w.Write([]byte(`{"secureLoginToken":"t","companies":[{"id":1}]}`))
+		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
+			_, _ = w.Write([]byte(`{"token":"session-token"}`))
+		default:
+			_, _ = w.Write([]byte(`{"status":false}`))
+		}
+	}))
+	defer srv.Close()
+
+	c := NewInternal(InternalConfig{Endpoint: srv.URL, Username: "u", Password: "p", retryBaseDur: time.Microsecond})
+	err := c.SendWelcomeEmail(context.Background(), "a@b.c")
+	if err == nil {
+		t.Fatal("status false must be an error")
+	}
+	if !strings.Contains(err.Error(), "not sent") {
+		t.Errorf("error should say the mail was not sent, got %q", err.Error())
+	}
+}
+
+func TestSendWelcomeEmail_RejectsEmptyAddress(t *testing.T) {
+	m := newFieldMock(t)
+	if err := m.client().SendWelcomeEmail(context.Background(), "  "); err == nil {
+		t.Error("want a validation error before any request")
+	}
+	if len(m.paths) != 0 {
+		t.Error("no request should be made")
+	}
+}
+
+func TestSendWelcomeEmail_HTTPFailurePropagates(t *testing.T) {
+	m := newFieldMock(t)
+	m.rejectAt = "SendWorkerWelcomeEmail"
+
+	if err := m.client().SendWelcomeEmail(context.Background(), "a@b.c"); err == nil {
+		t.Error("want the HTTP failure to surface")
+	}
+}
+
+func TestSendWelcomeEmail_MalformedResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/Auth/SignIn/"):
+			_, _ = w.Write([]byte(`{"secureLoginToken":"t","companies":[{"id":1}]}`))
+		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
+			_, _ = w.Write([]byte(`{"token":"session-token"}`))
+		default:
+			_, _ = w.Write([]byte(`{broken`))
+		}
+	}))
+	defer srv.Close()
+
+	c := NewInternal(InternalConfig{Endpoint: srv.URL, Username: "u", Password: "p", retryBaseDur: time.Microsecond})
+	if err := c.SendWelcomeEmail(context.Background(), "a@b.c"); !errors.Is(err, ErrDecode) {
+		t.Errorf("want ErrDecode, got %v", err)
+	}
+}
+
+func TestSendWelcomeEmail_NeedsCredentials(t *testing.T) {
+	c := NewInternal(InternalConfig{Endpoint: "https://example.test"})
+	if err := c.SendWelcomeEmail(context.Background(), "a@b.c"); err == nil {
+		t.Error("want a credentials error")
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -114,6 +115,13 @@ type InternalClient interface {
 	// YYYY-MM-DD date. The endpoint's timestamp/offset encoding is handled
 	// internally so the value round-trips.
 	SetWorkerDateOfEmployment(ctx context.Context, workerNr int64, date string) error
+
+	// SendWelcomeEmail sends Kala's onboarding email to an address.
+	//
+	// Unlike every other write here, this has no persistent effect to read
+	// back — the only confirmation available is the endpoint's own status
+	// field, so ARCH1.8's read-back rule cannot apply.
+	SendWelcomeEmail(ctx context.Context, email string) error
 
 	// CreateWorker registers a new employee via /Api/SignUp/.
 	//
@@ -397,6 +405,15 @@ func (c *internalAPI) selectCompany(ctx context.Context, companyID int64, secure
 // request performs one HTTP call with retries, mirroring the webapiv2 policy:
 // retry 5xx and transport failures, never 4xx.
 func (c *internalAPI) request(ctx context.Context, method, path string, body []byte, headers map[string]string) ([]byte, error) {
+	return c.requestWithContentType(ctx, method, path, body, contentTypeHeader, headers)
+}
+
+// requestWithContentType is request() with an explicit Content-Type, because
+// SendWorkerWelcomeEmail takes a form-encoded body while everything else on
+// this API takes JSON.
+func (c *internalAPI) requestWithContentType(
+	ctx context.Context, method, path string, body []byte, contentType string, headers map[string]string,
+) ([]byte, error) {
 	target := c.cfg.Endpoint + path
 
 	var lastErr error
@@ -417,7 +434,7 @@ func (c *internalAPI) request(ctx context.Context, method, path string, body []b
 			return nil, fmt.Errorf("%w: %v", ErrTransport, sanitizeError(err))
 		}
 		req.Header.Set("Accept", acceptHeader)
-		req.Header.Set("Content-Type", contentTypeHeader)
+		req.Header.Set("Content-Type", contentType)
 		for k, v := range headers {
 			req.Header.Set(k, v)
 		}
@@ -661,6 +678,56 @@ func (c *internalAPI) SetWorkerEmail(ctx context.Context, workerNr int64, email 
 		return fmt.Errorf(
 			"kala: SetEmail for worker %d reported success but the address reads back as %q, expected %q",
 			workerNr, info.Email, email)
+	}
+
+	return nil
+}
+
+// wireStatusResponse is the {"status": bool} shape SendWorkerWelcomeEmail returns.
+type wireStatusResponse struct {
+	Status *bool `json:"status"`
+}
+
+// SendWelcomeEmail sends Kala's onboarding email.
+//
+// Two things make this endpoint unlike the others: the body is
+// form-encoded rather than JSON, and it is keyed on the email address rather
+// than on workerNr.
+//
+// It also cannot be verified by read-back — sending an email leaves nothing to
+// re-read — so the endpoint's own {"status": true} is the only confirmation
+// available, and a false status is treated as failure.
+func (c *internalAPI) SendWelcomeEmail(ctx context.Context, email string) error {
+	if strings.TrimSpace(email) == "" {
+		return fmt.Errorf("email must not be empty")
+	}
+
+	token, companyID, err := c.session(ctx)
+	if err != nil {
+		return err
+	}
+
+	form := url.Values{}
+	form.Set("email", email)
+
+	raw, err := c.requestWithContentType(ctx,
+		http.MethodPost, "/api/SendWorkerWelcomeEmail",
+		[]byte(form.Encode()),
+		"application/x-www-form-urlencoded;charset=UTF-8",
+		map[string]string{
+			"kauthtoken": token,
+			"kacompany":  strconv.FormatInt(companyID, 10),
+		})
+	if err != nil {
+		return fmt.Errorf("kala: sending the welcome email: %w", err)
+	}
+
+	var resp wireStatusResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return fmt.Errorf("%w: welcome-email response: %v", ErrDecode, err)
+	}
+	if resp.Status != nil && !*resp.Status {
+		return fmt.Errorf("kala: the welcome email was not sent (the API reported status false)")
 	}
 
 	return nil
