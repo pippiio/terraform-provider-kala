@@ -245,6 +245,7 @@ func (r *employeeResource) Create(ctx context.Context, req resource.CreateReques
 		if !existing.IsValidated && wantActive {
 			if err := internal.SetWorkerValidated(ctx, number, true); err != nil {
 				resp.Diagnostics.AddError("Could not reactivate the existing Kala employee", err.Error())
+				r.recordPartialCreate(ctx, plan, internal, resp)
 				return
 			}
 			resp.Diagnostics.AddWarning(
@@ -259,6 +260,7 @@ func (r *employeeResource) Create(ctx context.Context, req resource.CreateReques
 		} else if existing.IsValidated && !wantActive {
 			if err := internal.SetWorkerValidated(ctx, number, false); err != nil {
 				resp.Diagnostics.AddError("Could not deactivate the existing Kala employee", err.Error())
+				r.recordPartialCreate(ctx, plan, internal, resp)
 				return
 			}
 		}
@@ -292,6 +294,7 @@ func (r *employeeResource) Create(ctx context.Context, req resource.CreateReques
 		if !wantActive {
 			if err := internal.SetWorkerValidated(ctx, number, false); err != nil {
 				resp.Diagnostics.AddError("Employee was created but could not be deactivated", err.Error())
+				r.recordPartialCreate(ctx, plan, internal, resp)
 				return
 			}
 		}
@@ -328,10 +331,12 @@ func (r *employeeResource) Create(ctx context.Context, req resource.CreateReques
 	// employee this is what brings Kala in line with the configuration.
 	// The empty prior state means "write whatever was declared".
 	if !r.applyFieldChanges(ctx, internal, number, plan, prior, &resp.Diagnostics) {
+		r.recordPartialCreate(ctx, plan, internal, resp)
 		return
 	}
 
 	if !r.refresh(ctx, &plan, internal, &resp.Diagnostics) {
+		r.recordPartialCreate(ctx, plan, internal, resp)
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
@@ -681,5 +686,93 @@ func applyWorker(m *employeeResourceModel, w client.Worker) {
 	}
 }
 
-// resolveUnknowns replaces unknown values with null. Not yet implemented.
-func resolveUnknowns(_ *employeeResourceModel) {}
+// recordPartialCreate writes state for an employee that exists in Kala, before
+// Create returns the error that stopped it.
+//
+// Kala has no delete endpoint. Returning an error without writing state leaves
+// the record stranded: Terraform will not manage it, `terraform destroy` will
+// not deactivate it, and the next apply takes the adoption path instead of the
+// creation path — so the failure heals into silence rather than surfacing. The
+// framework permits state and error diagnostics together, and this is what that
+// is for.
+//
+// State describes Kala, not the plan: a best-effort refresh runs first so the
+// unconverged fields read back as they actually are, which is what makes the
+// next plan show exactly what still needs applying. Its diagnostics are
+// discarded — a failure here must not displace the error that brought us in.
+func (r *employeeResource) recordPartialCreate(
+	ctx context.Context, plan employeeResourceModel,
+	c client.InternalClient, resp *resource.CreateResponse,
+) {
+	number := plan.EmployeeNumber.ValueInt64()
+	adopted := plan.Adopted.ValueBool()
+
+	var discard diag.Diagnostics
+	r.refresh(ctx, &plan, c, &discard)
+
+	// Whether or not the refresh reached Kala, nothing unknown may reach state.
+	resolveUnknowns(&plan)
+
+	tflog.Debug(ctx, "recording state for a partially created employee", map[string]any{
+		"employee_number": number,
+		"adopted":         adopted,
+	})
+
+	if adopted {
+		resp.Diagnostics.AddWarning(
+			"Employee was adopted, but the apply did not finish",
+			fmt.Sprintf(
+				"Employee %d already existed in Kala and this resource has taken ownership of it, "+
+					"but a later step failed (see the error above).\n\n"+
+					"Terraform has recorded the employee in state so the work is not lost. Fix the "+
+					"cause and apply again to finish converging it; the next plan shows exactly "+
+					"which fields are still unapplied.",
+				number),
+		)
+	} else {
+		resp.Diagnostics.AddWarning(
+			"Employee was created, but the apply did not finish",
+			fmt.Sprintf(
+				"Employee %d was created in Kala and a later step failed (see the error above). "+
+					"Kala has no delete endpoint, so this employee now exists permanently and "+
+					"cannot be deleted.\n\n"+
+					"Terraform has recorded them in state rather than abandoning the record. Fix "+
+					"the cause and apply again to finish configuring them, or run `terraform "+
+					"destroy` to deactivate them.",
+				number),
+		)
+	}
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// resolveUnknowns replaces every unknown value in the model with null.
+//
+// A Computed attribute left unknown after apply is a framework error, so a
+// model bound for state must carry none. Null is the honest substitute: it
+// records that Terraform does not know what Kala holds, and the next Read
+// fills it in.
+func resolveUnknowns(m *employeeResourceModel) {
+	for _, p := range []*types.String{
+		&m.Name, &m.Email, &m.Title, &m.Phone, &m.PrivatePhone, &m.Department,
+		&m.Initials, &m.LicensePlate, &m.DateOfEmployment, &m.FlexStartDate,
+		&m.NormHours, &m.LeaderNote,
+	} {
+		if p.IsUnknown() {
+			*p = types.StringNull()
+		}
+	}
+	for _, p := range []*types.Bool{
+		&m.Active, &m.SendWelcomeEmail, &m.IsLeader, &m.IsPlanner, &m.IsSuperUser,
+		&m.IsFinance, &m.IsVisibleInPlanner, &m.Adopted,
+	} {
+		if p.IsUnknown() {
+			*p = types.BoolNull()
+		}
+	}
+	for _, p := range []*types.Int64{&m.EmployeeNumber, &m.WorkerID} {
+		if p.IsUnknown() {
+			*p = types.Int64Null()
+		}
+	}
+}
