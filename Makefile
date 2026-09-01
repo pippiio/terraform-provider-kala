@@ -1,7 +1,7 @@
 BINARY := terraform-provider-kala
 COVER_PROFILE := coverage.out
 
-.PHONY: build test cover cover-html lint fmt fmt-check install-mirror release-check clean help
+.PHONY: build test cover cover-html lint fmt fmt-check install-mirror release-check vuln clean help
 
 ## build: compile the provider binary
 build:
@@ -45,6 +45,10 @@ install-mirror: build
 	mkdir -p $$DEST; \
 	cp $(BINARY) $$DEST/$(BINARY)_v$$VERSION; \
 	echo "installed $$DEST/$(BINARY)_v$$VERSION"
+
+## vuln: scan for vulnerabilities this code can actually reach
+vuln:
+	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
 ## release-check: validate .goreleaser.yml and dry-run the release build
 release-check:

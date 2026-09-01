@@ -52,6 +52,17 @@ jobs:
       - name: Race detector
         run: go test ./... -race -count=1
 
+      # Guardrail "Dependencies must pass security audit". This is reachability-
+      # aware: it fails only on vulnerabilities this code can actually reach, so
+      # it does not nag about unreachable CVEs deep in the dependency tree.
+      #
+      # Added after a review found four reachable CVEs in transitive deps of the
+      # plugin framework that had gone unnoticed because nothing checked.
+      - name: Vulnerability scan
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
   build:
     name: build ${{ matrix.goos }}/${{ matrix.goarch }}
     runs-on: ubuntu-latest
