@@ -104,15 +104,15 @@ func (r *employeeSettingResource) Configure(_ context.Context, req resource.Conf
 	if req.ProviderData == nil {
 		return
 	}
-	c, ok := req.ProviderData.(client.Client)
+	c, ok := req.ProviderData.(*providerClients)
 	if !ok {
 		resp.Diagnostics.AddError(
 			"Unexpected provider data type",
-			"The kala_employee_setting resource expected a configured Kala client. This is a bug in the provider.",
+			"The kala_employee_setting resource expected configured Kala clients. This is a bug in the provider.",
 		)
 		return
 	}
-	r.client = c
+	r.client = c.Web
 }
 
 // validateKey enforces the unknown-key guard.

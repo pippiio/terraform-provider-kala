@@ -130,14 +130,11 @@ func TestProvider_RegistersExpectedResources(t *testing.T) {
 		t.Errorf("kala_employee_setting not registered; got %v", names)
 	}
 
-	// kala_employee manages activation via the internal API's workerNr, whose
-	// relationship to webapiv2's employeeNumber is unverified. ARCH1.9 blocks
-	// that translation until confirmed against a live tenant — deactivating the
-	// wrong person is the harm being avoided. Registering it before then would
-	// be a correctness bug, so this assertion is a guard, not a placeholder.
-	if contains(names, "kala_employee") {
-		t.Error("kala_employee is registered, but ARCH1.9 blocks it until the " +
-			"workerNr/employeeNumber mapping is confirmed against a live tenant (ADR-002)")
+	// ARCH1.9 was resolved on 2026-09-01 — medarbejderNr, workerNr, and
+	// employeeNumber are confirmed to be one value — so kala_employee is now
+	// registered.
+	if !contains(names, "kala_employee") {
+		t.Errorf("kala_employee not registered; got %v", names)
 	}
 }
 

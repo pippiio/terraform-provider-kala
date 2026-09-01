@@ -33,6 +33,8 @@ type providerModel struct {
 	Company                  types.Int64  `tfsdk:"company"`
 	TimeoutSeconds           types.Int64  `tfsdk:"timeout_seconds"`
 	MaxRetries               types.Int64  `tfsdk:"max_retries"`
+	Username                 types.String `tfsdk:"username"`
+	Password                 types.String `tfsdk:"password"`
 	SkipCredentialValidation types.Bool   `tfsdk:"skip_credential_validation"`
 }
 
@@ -73,6 +75,18 @@ func (p *kalaProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp 
 			"max_retries": schema.Int64Attribute{
 				Optional:            true,
 				MarkdownDescription: "Maximum retries for transient failures. Only 5xx and transport errors are retried; 4xx never is. Defaults to 3.",
+			},
+			"username": schema.StringAttribute{
+				Optional: true,
+				MarkdownDescription: "Username for Kala's internal app API. Required only for resources that " +
+					"manage employee lifecycle (creation and activation), which webapiv2 does not expose. " +
+					"May also be set via `KALA_USERNAME`.",
+			},
+			"password": schema.StringAttribute{
+				Optional:  true,
+				Sensitive: true, // SEC1.2
+				MarkdownDescription: "Password for Kala's internal app API. May also be set via " +
+					"`KALA_PASSWORD`, which is preferred so the credential stays out of version control.",
 			},
 			"skip_credential_validation": schema.BoolAttribute{
 				Optional: true,
@@ -165,8 +179,34 @@ func (p *kalaProvider) Configure(ctx context.Context, req provider.ConfigureRequ
 		tflog.Debug(ctx, "Skipping Kala credential validation at user request")
 	}
 
-	resp.DataSourceData = c
-	resp.ResourceData = c
+	clients := &providerClients{Web: c}
+
+	// The internal API is optional: only employee-lifecycle resources need it,
+	// and requiring credentials for everyone would block users who only read.
+	username, userErr := resolveCredential(config.Username.ValueString(), "KALA_USERNAME")
+	password, passErr := resolveCredential(config.Password.ValueString(), "KALA_PASSWORD")
+	switch {
+	case userErr == nil && passErr == nil:
+		clients.Internal = client.NewInternal(client.InternalConfig{
+			Username:   username,
+			Password:   password,
+			Timeout:    time.Duration(config.TimeoutSeconds.ValueInt64()) * time.Second,
+			MaxRetries: cfg.MaxRetries,
+		})
+		tflog.Debug(ctx, "internal Kala API credentials configured")
+	case userErr == nil || passErr == nil:
+		// One without the other is a configuration mistake, not an opt-out.
+		resp.Diagnostics.AddWarning(
+			"Incomplete Kala internal API credentials",
+			"Only one of username/password was supplied, so the internal app API is not configured. "+
+				"Employee lifecycle resources will fail until both are set. Supply both, or neither.",
+		)
+	default:
+		tflog.Debug(ctx, "internal Kala API not configured; lifecycle resources unavailable")
+	}
+
+	resp.DataSourceData = clients
+	resp.ResourceData = clients
 }
 
 func (p *kalaProvider) DataSources(_ context.Context) []func() datasource.DataSource {
@@ -176,14 +216,9 @@ func (p *kalaProvider) DataSources(_ context.Context) []func() datasource.DataSo
 }
 
 // Resources returns the provider's resources.
-//
-// kala_employee (activation state) is deliberately absent: it requires the
-// internal API's workerNr, whose relationship to webapiv2's employeeNumber is
-// unverified. Guardrail ARCH1.9 blocks that translation until it is confirmed
-// against a live tenant, because deactivating the wrong person is serious harm.
-// See ADR-002.
 func (p *kalaProvider) Resources(_ context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
+		NewEmployeeResource,
 		NewEmployeeSettingResource,
 	}
 }

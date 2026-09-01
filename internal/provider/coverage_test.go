@@ -25,6 +25,8 @@ func TestConfigure_UnknownAPIKeyIsRejected(t *testing.T) {
 		"company":                    tftypes.NewValue(tftypes.Number, nil),
 		"timeout_seconds":            tftypes.NewValue(tftypes.Number, nil),
 		"max_retries":                tftypes.NewValue(tftypes.Number, nil),
+		"username":                   tftypes.NewValue(tftypes.String, nil),
+		"password":                   tftypes.NewValue(tftypes.String, nil),
 		"skip_credential_validation": tftypes.NewValue(tftypes.Bool, nil),
 	}))
 	if err != nil {
@@ -56,6 +58,8 @@ func TestConfigure_UnknownEndpointIsRejected(t *testing.T) {
 		"company":                    tftypes.NewValue(tftypes.Number, nil),
 		"timeout_seconds":            tftypes.NewValue(tftypes.Number, nil),
 		"max_retries":                tftypes.NewValue(tftypes.Number, nil),
+		"username":                   tftypes.NewValue(tftypes.String, nil),
+		"password":                   tftypes.NewValue(tftypes.String, nil),
 		"skip_credential_validation": tftypes.NewValue(tftypes.Bool, nil),
 	}))
 	if err != nil {
@@ -86,6 +90,8 @@ func TestConfigure_ExplicitTuningValuesAreAccepted(t *testing.T) {
 		"company":                    tftypes.NewValue(tftypes.Number, 42),
 		"timeout_seconds":            tftypes.NewValue(tftypes.Number, 15),
 		"max_retries":                tftypes.NewValue(tftypes.Number, 1),
+		"username":                   tftypes.NewValue(tftypes.String, nil),
+		"password":                   tftypes.NewValue(tftypes.String, nil),
 		"skip_credential_validation": tftypes.NewValue(tftypes.Bool, false),
 	}))
 	if err != nil {

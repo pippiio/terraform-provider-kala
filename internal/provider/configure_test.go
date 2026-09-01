@@ -24,6 +24,8 @@ func providerConfigType() tftypes.Object {
 			"company":                    tftypes.Number,
 			"timeout_seconds":            tftypes.Number,
 			"max_retries":                tftypes.Number,
+			"username":                   tftypes.String,
+			"password":                   tftypes.String,
 			"skip_credential_validation": tftypes.Bool,
 		},
 	}
@@ -32,6 +34,8 @@ func providerConfigType() tftypes.Object {
 type cfgOverrides struct {
 	endpoint string
 	apiKey   string
+	username string
+	password string
 	skip     *bool
 }
 
@@ -45,6 +49,8 @@ func buildProviderConfig(t *testing.T, o cfgOverrides) *tfprotov6.DynamicValue {
 		"company":                    tftypes.NewValue(tftypes.Number, nil),
 		"timeout_seconds":            tftypes.NewValue(tftypes.Number, nil),
 		"max_retries":                tftypes.NewValue(tftypes.Number, nil),
+		"username":                   tftypes.NewValue(tftypes.String, nullIfEmpty(o.username)),
+		"password":                   tftypes.NewValue(tftypes.String, nullIfEmpty(o.password)),
 		"skip_credential_validation": tftypes.NewValue(tftypes.Bool, boolOrNil(o.skip)),
 	}
 

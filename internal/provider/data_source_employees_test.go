@@ -125,7 +125,7 @@ func TestEmployeesDataSource_ConfigureAcceptsClient(t *testing.T) {
 	ds := NewEmployeesDataSource().(*employeesDataSource)
 
 	resp := &datasource.ConfigureResponse{}
-	ds.Configure(context.Background(), datasource.ConfigureRequest{ProviderData: &fakeClient{}}, resp)
+	ds.Configure(context.Background(), datasource.ConfigureRequest{ProviderData: &providerClients{Web: &fakeClient{}}}, resp)
 
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", resp.Diagnostics)

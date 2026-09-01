@@ -103,15 +103,15 @@ func (d *employeesDataSource) Configure(_ context.Context, req datasource.Config
 		return
 	}
 
-	c, ok := req.ProviderData.(client.Client)
+	c, ok := req.ProviderData.(*providerClients)
 	if !ok {
 		resp.Diagnostics.AddError(
 			"Unexpected provider data type",
-			"The kala_employees data source expected a configured Kala client. This is a bug in the provider.",
+			"The kala_employees data source expected configured Kala clients. This is a bug in the provider.",
 		)
 		return
 	}
-	d.client = c
+	d.client = c.Web
 }
 
 func (d *employeesDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {

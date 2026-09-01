@@ -16,6 +16,8 @@ var envVarForAttribute = map[string]string{
 	"KALA_API_KEY":  "api_key",
 	"KALA_COMPANY":  "company",
 	"KALA_ENDPOINT": "endpoint",
+	"KALA_USERNAME": "username",
+	"KALA_PASSWORD": "password",
 }
 
 // resolveCredential returns configured if non-empty, else the value of envVar.

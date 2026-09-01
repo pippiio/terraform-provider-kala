@@ -358,7 +358,7 @@ func TestSettingResource_Configure(t *testing.T) {
 
 	// A real client is stored.
 	resp = &resource.ConfigureResponse{}
-	r.Configure(context.Background(), resource.ConfigureRequest{ProviderData: &fakeClient{}}, resp)
+	r.Configure(context.Background(), resource.ConfigureRequest{ProviderData: &providerClients{Web: &fakeClient{}}}, resp)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("unexpected diagnostics: %s", diagsText(resp.Diagnostics))
 	}
