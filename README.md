@@ -109,6 +109,12 @@ so a mistyped key is permanent. `kala_employee_setting` rejects a key that exist
 nowhere on the account and suggests the nearest match; `allow_new_key = true`
 introduces a genuinely new one.
 
+The survey behind that check is bounded — it examines at most 200 employees in
+full, and skips any whose record it cannot read. On a larger account the
+rejection says so and reports how many were examined, rather than claiming the
+key exists nowhere. Read that wording before reaching for `allow_new_key`: the
+key may simply live on an employee that was not checked.
+
 ## Development
 
 ```bash

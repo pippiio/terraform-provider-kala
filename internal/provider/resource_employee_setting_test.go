@@ -96,7 +96,7 @@ func TestValidateKey_RejectsUnknownKeyAndSuggestsNearest(t *testing.T) {
 
 func TestValidateKey_AllowNewKeySkipsTheCheckEntirely(t *testing.T) {
 	// keysErr would fail the check if it ran at all.
-	fc := &fakeClient{keysErr: errors.New("ListSettingKeys must not be called")}
+	fc := &fakeClient{keysErr: errors.New("ScanSettingKeys must not be called")}
 	r := newSettingResource(fc)
 
 	if _, err := r.validateKey(context.Background(), "brand_new_key", true); err != nil {

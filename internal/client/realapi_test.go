@@ -63,7 +63,7 @@ func TestListEmployees_Empty200BodyIsAnEmptyList(t *testing.T) {
 // the list returned 11 keys while ActiveEmployee returned 12. A key present
 // only on the single endpoint must still be discoverable, or the unknown-key
 // guard rejects a key that genuinely exists.
-func TestListSettingKeys_IncludesKeysOnlyVisibleOnTheSingleEndpoint(t *testing.T) {
+func TestScanSettingKeys_IncludesKeysOnlyVisibleOnTheSingleEndpoint(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/ActiveEmployeesList" {
 			_, _ = w.Write([]byte(`[{"number":1,"name":"A","settings":[{"key":"listed_key","value":"v"}]}]`))
@@ -78,10 +78,11 @@ func TestListSettingKeys_IncludesKeysOnlyVisibleOnTheSingleEndpoint(t *testing.T
 	defer srv.Close()
 
 	c := newWebAPIv2(testConfig(srv.URL))
-	got, err := c.ListSettingKeys(context.Background())
+	scan, err := c.ScanSettingKeys(context.Background())
 	if err != nil {
-		t.Fatalf("ListSettingKeys: %v", err)
+		t.Fatalf("ScanSettingKeys: %v", err)
 	}
+	got := scan.Keys
 
 	want := map[string]bool{"listed_key": false, "favorite_materials": false}
 	for _, k := range got {

@@ -138,7 +138,24 @@ func (r *employeeSettingResource) validateKey(ctx context.Context, key string, a
 		}
 	}
 
-	msg := fmt.Sprintf("The setting key %q is not in use anywhere on this Kala account.\n\n", key)
+	// The claim has to match the evidence. A survey that stopped at the cap, or
+	// skipped an unreadable record, cannot support "nowhere on this account" —
+	// and a user who believes it and sets allow_new_key writes a key Kala can
+	// never remove. The rejection stands either way; only its wording weakens.
+	var msg string
+	if scan.Complete() {
+		msg = fmt.Sprintf("The setting key %q is not in use anywhere on this Kala account.\n\n", key)
+	} else {
+		msg = fmt.Sprintf(
+			"The setting key %q was not found, but this account was only partly surveyed: "+
+				"%d of %d employees were examined in full",
+			key, scan.Scanned-scan.Failed, scan.Employees)
+		if scan.Failed > 0 {
+			msg += fmt.Sprintf(" (%d could not be read)", scan.Failed)
+		}
+		msg += ".\n\nThe key may already exist on an employee that was not checked.\n\n"
+	}
+
 	if suggestion := client.ClosestKey(key, existing); suggestion != "" {
 		msg += fmt.Sprintf("Did you mean %q?\n\n", suggestion)
 	}

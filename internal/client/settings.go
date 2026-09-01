@@ -14,7 +14,7 @@ import (
 // Beyond this, "did you mean" stops being helpful and starts being noise.
 const closestKeyMaxDistance = 3
 
-// maxDeepScanEmployees bounds the per-employee scan in ListSettingKeys so a
+// maxDeepScanEmployees bounds the per-employee scan in ScanSettingKeys so a
 // large account cannot turn one Create into thousands of requests.
 const maxDeepScanEmployees = 200
 
@@ -81,7 +81,7 @@ func (c *webAPIv2) ApplyEmployeeSetting(ctx context.Context, employeeNumber int6
 	return nil
 }
 
-// ListSettingKeys returns every setting key currently in use across the account,
+// ScanSettingKeys surveys every setting key currently in use across the account,
 // sorted and deduplicated.
 //
 // This backs the unknown-key guard. Because settings cannot be deleted, writing
@@ -94,11 +94,15 @@ func (c *webAPIv2) ApplyEmployeeSetting(ctx context.Context, employeeNumber int6
 // "favorite_materials". Relying on the list alone would make the guard reject
 // keys that genuinely exist. The per-employee fetch is bounded by
 // maxDeepScanEmployees and only runs on resource creation, not on every plan.
-func (c *webAPIv2) ListSettingKeys(ctx context.Context) ([]string, error) {
+//
+// The bound is reported rather than hidden: see SettingKeyScan.Complete.
+func (c *webAPIv2) ScanSettingKeys(ctx context.Context) (SettingKeyScan, error) {
 	employees, err := c.ListEmployees(ctx, ListOptions{})
 	if err != nil {
-		return nil, err
+		return SettingKeyScan{}, err
 	}
+
+	scan := SettingKeyScan{Employees: len(employees)}
 
 	seen := make(map[string]struct{})
 	for _, e := range employees {
@@ -110,17 +114,18 @@ func (c *webAPIv2) ListSettingKeys(ctx context.Context) ([]string, error) {
 	}
 
 	// Second pass: the single-employee endpoint reveals keys the list omits.
-	scanned := 0
 	for _, e := range employees {
-		if scanned >= maxDeepScanEmployees {
+		if scan.Scanned >= maxDeepScanEmployees {
 			break
 		}
-		scanned++
+		scan.Scanned++
 
 		full, err := c.GetEmployee(ctx, e.Number)
 		if err != nil {
-			// Best-effort enrichment: a failure here degrades the guard's
-			// completeness but must not block the caller entirely.
+			// Best-effort enrichment: a failure here degrades the survey's
+			// completeness but must not block the caller entirely. Counting it
+			// is what stops the degradation from being invisible.
+			scan.Failed++
 			continue
 		}
 		for _, s := range full.Settings {
@@ -130,14 +135,42 @@ func (c *webAPIv2) ListSettingKeys(ctx context.Context) ([]string, error) {
 		}
 	}
 
-	keys := make([]string, 0, len(seen))
+	scan.Keys = make([]string, 0, len(seen))
 	for k := range seen {
-		keys = append(keys, k)
+		scan.Keys = append(scan.Keys, k)
 	}
 	// Sorted so diagnostics are stable across runs.
-	sort.Strings(keys)
+	sort.Strings(scan.Keys)
 
-	return keys, nil
+	return scan, nil
+}
+
+// SettingKeyScan is the result of surveying an account for the setting keys it
+// already uses.
+//
+// Completeness travels with the findings because the survey is bounded in two
+// ways, and the guard it feeds makes a claim that only a complete survey can
+// support: that a key is in use nowhere on the account. On an account larger
+// than the scan cap that claim would be false, and acting on it writes a key
+// Kala can never remove.
+type SettingKeyScan struct {
+	// Keys is every setting key the survey found, sorted and deduplicated.
+	// A partial survey still returns what it reached.
+	Keys []string
+
+	// Employees is how many are on the account; Scanned is how many had their
+	// full record fetched, capped at maxDeepScanEmployees; Failed is how many
+	// of those fetches errored and were skipped.
+	Employees int
+	Scanned   int
+	Failed    int
+}
+
+// Complete reports whether every employee on the account was examined in full.
+//
+// Only then can a key's absence from Keys be read as absence from the account.
+func (s SettingKeyScan) Complete() bool {
+	return s.Failed == 0 && s.Scanned >= s.Employees
 }
 
 // ClosestKey returns the candidate nearest to input by Levenshtein distance, or
@@ -203,22 +236,4 @@ func min3(a, b, c int) int {
 		m = c
 	}
 	return m
-}
-
-// SettingKeyScan is the result of surveying an account's setting keys.
-// Not yet implemented.
-type SettingKeyScan struct {
-	Keys      []string
-	Employees int
-	Scanned   int
-	Failed    int
-}
-
-// Complete reports whether the whole account was examined. Not yet implemented.
-func (s SettingKeyScan) Complete() bool { return true }
-
-// ScanSettingKeys surveys the account's setting keys. Not yet implemented.
-func (c *webAPIv2) ScanSettingKeys(ctx context.Context) (SettingKeyScan, error) {
-	keys, err := c.ListSettingKeys(ctx)
-	return SettingKeyScan{Keys: keys}, err
 }

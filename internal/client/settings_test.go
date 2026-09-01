@@ -125,9 +125,9 @@ func TestApplyEmployeeSetting_PropagatesHTTPError(t *testing.T) {
 	}
 }
 
-// ListSettingKeys backs the unknown-key guard. Since there is no delete-setting
+// ScanSettingKeys backs the unknown-key guard. Since there is no delete-setting
 // endpoint, a typo is permanent — this is what makes the guard worth having.
-func TestListSettingKeys_ReturnsSortedUniqueKeysAcrossEmployees(t *testing.T) {
+func TestScanSettingKeys_ReturnsSortedUniqueKeysAcrossEmployees(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`[
 			{"number":1,"name":"A","settings":[{"key":"zulu","value":"1"},{"key":"alpha","value":"2"}]},
@@ -138,10 +138,11 @@ func TestListSettingKeys_ReturnsSortedUniqueKeysAcrossEmployees(t *testing.T) {
 	defer srv.Close()
 
 	c := newWebAPIv2(testConfig(srv.URL))
-	got, err := c.ListSettingKeys(context.Background())
+	scan, err := c.ScanSettingKeys(context.Background())
 	if err != nil {
-		t.Fatalf("ListSettingKeys: %v", err)
+		t.Fatalf("ScanSettingKeys: %v", err)
 	}
+	got := scan.Keys
 
 	want := []string{"alpha", "mike", "zulu"}
 	if len(got) != len(want) {
@@ -158,17 +159,18 @@ func TestListSettingKeys_ReturnsSortedUniqueKeysAcrossEmployees(t *testing.T) {
 	}
 }
 
-func TestListSettingKeys_EmptyAccount(t *testing.T) {
+func TestScanSettingKeys_EmptyAccount(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`[]`))
 	}))
 	defer srv.Close()
 
 	c := newWebAPIv2(testConfig(srv.URL))
-	got, err := c.ListSettingKeys(context.Background())
+	scan, err := c.ScanSettingKeys(context.Background())
 	if err != nil {
-		t.Fatalf("ListSettingKeys: %v", err)
+		t.Fatalf("ScanSettingKeys: %v", err)
 	}
+	got := scan.Keys
 	if got == nil {
 		t.Error("want an empty non-nil slice")
 	}

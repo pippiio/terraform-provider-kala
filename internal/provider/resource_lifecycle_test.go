@@ -324,7 +324,7 @@ func TestImportState_MalformedIDErrors(t *testing.T) {
 
 // --- helpers --------------------------------------------------------------
 
-var errKeysMustNotBeListed = errors.New("ListSettingKeys must not be called during update")
+var errKeysMustNotBeListed = errors.New("ScanSettingKeys must not be called during update")
 
 func tfBool(b bool) types.Bool { return types.BoolValue(b) }
 
