@@ -37,7 +37,15 @@
 
 package client
 
-import "context"
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strconv"
+)
 
 // Customer is the provider-owned representation of a customer in Kala.
 //
@@ -97,7 +105,112 @@ type CustomerScan struct {
 // Complete reports whether the read covered everything upstream claimed to hold.
 func (s CustomerScan) Complete() bool { return s.Fetched >= s.Total }
 
-// ListCustomers reads customers from the internal app API.
+// wireCustomer is the internal API's customer record. Unexported: upstream
+// naming stops here (ARCH1.4, and layering_test.go fails the build otherwise).
+//
+// Observed 2026-09-01 against the real API. Note number is a string on this
+// surface; webapiv2 sends an int for the same field name.
+type wireCustomer struct {
+	ID        int64  `json:"id"`
+	Number    string `json:"number"`
+	FirstName string `json:"firstName"`
+	LastName  string `json:"lastName"`
+	Company   string `json:"company"`
+	CVR       string `json:"cvr"`
+	Email     string `json:"email"`
+	Phone     string `json:"phone"`
+	Address   string `json:"address"`
+	Zip       string `json:"zip"`
+	City      string `json:"city"` // arrives as null in practice
+	EAN       string `json:"ean"`
+	CaseCount int    `json:"caseCount"`
+}
+
+func (w wireCustomer) toDomain() Customer {
+	return Customer{
+		ID:        w.ID,
+		Number:    w.Number,
+		FirstName: w.FirstName,
+		LastName:  w.LastName,
+		Company:   w.Company,
+		CVR:       w.CVR,
+		Email:     w.Email,
+		Phone:     w.Phone,
+		Address:   w.Address,
+		Zip:       w.Zip,
+		City:      w.City,
+		EAN:       w.EAN,
+		CaseCount: w.CaseCount,
+	}
+}
+
+// wireCustomersPage is the paged envelope. totalCount is what makes the
+// completeness signal a direct comparison rather than an inference.
+type wireCustomersPage struct {
+	Customers  []wireCustomer `json:"customers"`
+	TotalCount int            `json:"totalCount"`
+}
+
+// ListCustomers reads customers from the internal app API, following pages
+// until the account is covered or the page cap is reached.
+//
+// The cap is what makes CustomerScan.Complete meaningful: termination is
+// guaranteed (GO1.6), so a caller must be told whether termination came from
+// reaching the end or from hitting the bound.
 func (c *internalAPI) ListCustomers(ctx context.Context, q CustomerQuery) (CustomerScan, error) {
-	return CustomerScan{}, nil // stub: RED
+	pageSize := q.PageSize
+	if pageSize <= 0 {
+		pageSize = defaultPageSize
+	}
+	maxPages := q.MaxPages
+	if maxPages <= 0 {
+		maxPages = defaultMaxPages
+	}
+
+	scan := CustomerScan{Customers: make([]Customer, 0, pageSize)}
+
+	for page := 0; page < maxPages; page++ {
+		params := url.Values{}
+		params.Set("page", strconv.Itoa(page))
+		params.Set("pageSize", strconv.Itoa(pageSize))
+		params.Set("query", q.Search)
+
+		raw, err := c.authedRequest(
+			ctx, http.MethodGet, "/api/GetCustomersPaged2/?"+params.Encode(), nil, contentTypeHeader,
+		)
+		if err != nil {
+			return CustomerScan{}, err
+		}
+		scan.Pages++
+
+		// An empty 200 on a LIST read means "no records". It means "not found"
+		// only on a single-record read -- the distinction decodeEmployee and
+		// decodeEmployeeList exist separately to preserve.
+		if len(bytes.TrimSpace(raw)) == 0 {
+			return scan, nil
+		}
+
+		var envelope wireCustomersPage
+		if err := json.Unmarshal(raw, &envelope); err != nil {
+			return CustomerScan{}, fmt.Errorf("%w: customers response: %v", ErrDecode, err)
+		}
+		scan.Total = envelope.TotalCount
+
+		for _, wc := range envelope.Customers {
+			scan.Customers = append(scan.Customers, wc.toDomain())
+		}
+		scan.Fetched = len(scan.Customers)
+
+		// A short page is the end of the data regardless of what totalCount
+		// claimed. Trusting totalCount over the records actually served would
+		// loop forever against an upstream that over-reports.
+		if len(envelope.Customers) < pageSize {
+			return scan, nil
+		}
+		if scan.Fetched >= scan.Total {
+			return scan, nil
+		}
+	}
+
+	return scan, nil
 }
