@@ -31,6 +31,12 @@ type fakeInternal struct {
 	emailSet    []emailSetCall
 	setEmailErr error
 
+	// field writes
+	fieldSets []fieldSetCall
+	roleSets  []roleSetCall
+	dateSet   string
+	fieldErr  error
+
 	// WorkerInfo enrichment
 	info      client.WorkerInfo
 	infoErr   error
@@ -46,6 +52,16 @@ type setValidatedCall struct {
 type emailSetCall struct {
 	number int64
 	email  string
+}
+
+type fieldSetCall struct {
+	field client.WorkerField
+	value string
+}
+
+type roleSetCall struct {
+	role  client.WorkerRole
+	value bool
 }
 
 func newFakeInternal(workers ...client.Worker) *fakeInternal {
@@ -108,6 +124,21 @@ func (f *fakeInternal) SetWorkerEmail(_ context.Context, nr int64, email string)
 	return nil
 }
 
+func (f *fakeInternal) SetWorkerField(_ context.Context, _ int64, field client.WorkerField, v string) error {
+	f.fieldSets = append(f.fieldSets, fieldSetCall{field, v})
+	return f.fieldErr
+}
+
+func (f *fakeInternal) SetWorkerRole(_ context.Context, _ int64, role client.WorkerRole, v bool) error {
+	f.roleSets = append(f.roleSets, roleSetCall{role, v})
+	return f.fieldErr
+}
+
+func (f *fakeInternal) SetWorkerDateOfEmployment(_ context.Context, _ int64, date string) error {
+	f.dateSet = date
+	return f.fieldErr
+}
+
 func (f *fakeInternal) GetWorkerInfo(_ context.Context, nr int64) (client.WorkerInfo, error) {
 	f.infoCalls++
 	if f.infoErr != nil {
@@ -168,6 +199,18 @@ func employeeValue(t *testing.T, m employeeResourceModel) tftypes.Value {
 		}
 		return v.ValueString()
 	}
+	bl := func(v types.Bool) any {
+		if v.IsNull() {
+			return nil
+		}
+		return v.ValueBool()
+	}
+	i64 := func(v types.Int64) any {
+		if v.IsNull() {
+			return nil
+		}
+		return v.ValueInt64()
+	}
 	return tftypes.NewValue(typ.(tftypes.Object), map[string]tftypes.Value{
 		"employee_number":       tftypes.NewValue(tftypes.Number, m.EmployeeNumber.ValueInt64()),
 		"name":                  tftypes.NewValue(tftypes.String, m.Name.ValueString()),
@@ -183,12 +226,12 @@ func employeeValue(t *testing.T, m employeeResourceModel) tftypes.Value {
 		"flex_start_date":       tftypes.NewValue(tftypes.String, str(m.FlexStartDate)),
 		"norm_hours":            tftypes.NewValue(tftypes.String, str(m.NormHours)),
 		"leader_note":           tftypes.NewValue(tftypes.String, str(m.LeaderNote)),
-		"is_leader":             tftypes.NewValue(tftypes.Bool, m.IsLeader.ValueBool()),
-		"is_planner":            tftypes.NewValue(tftypes.Bool, m.IsPlanner.ValueBool()),
-		"is_super_user":         tftypes.NewValue(tftypes.Bool, m.IsSuperUser.ValueBool()),
-		"is_finance":            tftypes.NewValue(tftypes.Bool, m.IsFinance.ValueBool()),
-		"is_visible_in_planner": tftypes.NewValue(tftypes.Bool, m.IsVisibleInPlanner.ValueBool()),
-		"worker_id":             tftypes.NewValue(tftypes.Number, m.WorkerID.ValueInt64()),
+		"is_leader":             tftypes.NewValue(tftypes.Bool, bl(m.IsLeader)),
+		"is_planner":            tftypes.NewValue(tftypes.Bool, bl(m.IsPlanner)),
+		"is_super_user":         tftypes.NewValue(tftypes.Bool, bl(m.IsSuperUser)),
+		"is_finance":            tftypes.NewValue(tftypes.Bool, bl(m.IsFinance)),
+		"is_visible_in_planner": tftypes.NewValue(tftypes.Bool, bl(m.IsVisibleInPlanner)),
+		"worker_id":             tftypes.NewValue(tftypes.Number, i64(m.WorkerID)),
 		"adopted":               tftypes.NewValue(tftypes.Bool, m.Adopted.ValueBool()),
 	})
 }
@@ -210,26 +253,29 @@ func emptyEmployeeState(t *testing.T) tfsdk.State {
 
 func employeeModelFor(number int64, name, email string, active bool) employeeResourceModel {
 	return employeeResourceModel{
-		EmployeeNumber:     types.Int64Value(number),
-		Name:               types.StringValue(name),
-		Email:              types.StringValue(email),
-		Active:             types.BoolValue(active),
-		Title:              types.StringValue(""),
-		Phone:              types.StringValue(""),
-		PrivatePhone:       types.StringValue(""),
-		Department:         types.StringValue(""),
-		Initials:           types.StringValue(""),
-		LicensePlate:       types.StringValue(""),
-		DateOfEmployment:   types.StringValue(""),
-		FlexStartDate:      types.StringValue(""),
-		NormHours:          types.StringValue(""),
-		LeaderNote:         types.StringValue(""),
-		IsLeader:           types.BoolValue(false),
-		IsPlanner:          types.BoolValue(false),
-		IsSuperUser:        types.BoolValue(false),
-		IsFinance:          types.BoolValue(false),
-		IsVisibleInPlanner: types.BoolValue(false),
-		WorkerID:           types.Int64Value(0),
+		EmployeeNumber: types.Int64Value(number),
+		Name:           types.StringValue(name),
+		Email:          types.StringValue(email),
+		Active:         types.BoolValue(active),
+		// Undeclared Optional+Computed attributes are null in a real plan, not
+		// empty strings — the distinction is what stops the provider blanking
+		// fields on an adopted employee.
+		Title:              types.StringNull(),
+		Phone:              types.StringNull(),
+		PrivatePhone:       types.StringNull(),
+		Department:         types.StringNull(),
+		Initials:           types.StringNull(),
+		LicensePlate:       types.StringNull(),
+		DateOfEmployment:   types.StringNull(),
+		FlexStartDate:      types.StringNull(),
+		NormHours:          types.StringNull(),
+		LeaderNote:         types.StringNull(),
+		IsLeader:           types.BoolNull(),
+		IsPlanner:          types.BoolNull(),
+		IsSuperUser:        types.BoolNull(),
+		IsFinance:          types.BoolNull(),
+		IsVisibleInPlanner: types.BoolNull(),
+		WorkerID:           types.Int64Null(),
 		Adopted:            types.BoolValue(false),
 	}
 }
@@ -988,5 +1034,302 @@ func TestApplyWorker_PreservesExplicitAdopted(t *testing.T) {
 
 	if !m.Adopted.ValueBool() {
 		t.Error("an explicit adopted=true must not be reset")
+	}
+}
+
+// --- field writes ---------------------------------------------------------
+
+func TestUpdateEmployee_WritesOnlyChangedFields(t *testing.T) {
+	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "X", IsValidated: true})
+	r := newEmployeeResource(fi)
+
+	state := employeeModelFor(3, "X", "e@example.com", true)
+	state.Title = types.StringValue("Old Title")
+	state.Phone = types.StringValue("111")
+	state.Department = types.StringValue("Ops")
+
+	plan := state
+	plan.Title = types.StringValue("New Title") // only this changes
+
+	resp := &resource.UpdateResponse{State: emptyEmployeeState(t)}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan: employeePlan(t, plan), State: employeeState(t, state),
+	}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("update failed: %s", diagsText(resp.Diagnostics))
+	}
+	if len(fi.fieldSets) != 1 {
+		t.Fatalf("want exactly one field write, got %+v", fi.fieldSets)
+	}
+	if fi.fieldSets[0].field != client.FieldTitle || fi.fieldSets[0].value != "New Title" {
+		t.Errorf("wrote %+v, want title=New Title", fi.fieldSets[0])
+	}
+}
+
+func TestUpdateEmployee_WritesRoleChanges(t *testing.T) {
+	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "X", IsValidated: true})
+	r := newEmployeeResource(fi)
+
+	state := employeeModelFor(3, "X", "e@example.com", true)
+	plan := state
+	plan.IsLeader = types.BoolValue(true)
+	plan.IsFinance = types.BoolValue(true)
+
+	resp := &resource.UpdateResponse{State: emptyEmployeeState(t)}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan: employeePlan(t, plan), State: employeeState(t, state),
+	}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("update failed: %s", diagsText(resp.Diagnostics))
+	}
+	if len(fi.roleSets) != 2 {
+		t.Fatalf("want two role writes, got %+v", fi.roleSets)
+	}
+}
+
+func TestUpdateEmployee_WritesDateOfEmployment(t *testing.T) {
+	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "X", IsValidated: true})
+	r := newEmployeeResource(fi)
+
+	state := employeeModelFor(3, "X", "e@example.com", true)
+	plan := state
+	plan.DateOfEmployment = types.StringValue("2026-03-15")
+
+	resp := &resource.UpdateResponse{State: emptyEmployeeState(t)}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan: employeePlan(t, plan), State: employeeState(t, state),
+	}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("update failed: %s", diagsText(resp.Diagnostics))
+	}
+	if fi.dateSet != "2026-03-15" {
+		t.Errorf("dateSet = %q, want 2026-03-15", fi.dateSet)
+	}
+}
+
+func TestUpdateEmployee_NoFieldChangesMakesNoWrites(t *testing.T) {
+	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "X", IsValidated: true})
+	r := newEmployeeResource(fi)
+
+	same := employeeModelFor(3, "X", "e@example.com", true)
+	same.Title = types.StringValue("T")
+
+	resp := &resource.UpdateResponse{State: emptyEmployeeState(t)}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan: employeePlan(t, same), State: employeeState(t, same),
+	}, resp)
+
+	if len(fi.fieldSets) != 0 || len(fi.roleSets) != 0 || fi.dateSet != "" {
+		t.Errorf("no writes expected: fields=%+v roles=%+v date=%q", fi.fieldSets, fi.roleSets, fi.dateSet)
+	}
+}
+
+func TestUpdateEmployee_FieldWriteFailureIsAttributeScoped(t *testing.T) {
+	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "X", IsValidated: true})
+	fi.fieldErr = errors.New("kala refused")
+	r := newEmployeeResource(fi)
+
+	state := employeeModelFor(3, "X", "e@example.com", true)
+	plan := state
+	plan.Phone = types.StringValue("999")
+
+	resp := &resource.UpdateResponse{State: emptyEmployeeState(t)}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan: employeePlan(t, plan), State: employeeState(t, state),
+	}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a failed field write must fail the apply")
+	}
+	if !strings.Contains(diagsText(resp.Diagnostics), "phone") {
+		t.Errorf("the diagnostic should name the attribute: %s", diagsText(resp.Diagnostics))
+	}
+}
+
+// SignUp only accepts number/name/email, so everything else declared in the
+// configuration has to be written separately at create time.
+func TestCreateEmployee_AppliesDeclaredFields(t *testing.T) {
+	fi := newFakeInternal()
+	r := newEmployeeResource(fi)
+
+	m := employeeModelFor(20, "New", "n@example.com", true)
+	m.Title = types.StringValue("Montør")
+	m.Phone = types.StringValue("12345678")
+	m.IsLeader = types.BoolValue(true)
+
+	resp := &resource.CreateResponse{State: emptyEmployeeState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: employeePlan(t, m)}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("create failed: %s", diagsText(resp.Diagnostics))
+	}
+	if !fi.createCalled {
+		t.Fatal("the employee was not created")
+	}
+	if len(fi.fieldSets) != 2 {
+		t.Errorf("want title and phone written, got %+v", fi.fieldSets)
+	}
+	if len(fi.roleSets) != 1 {
+		t.Errorf("want is_leader written, got %+v", fi.roleSets)
+	}
+}
+
+func TestEmployeeSchema_SettableFieldsAreOptionalAndComputed(t *testing.T) {
+	s := employeeSchema(t)
+
+	// Settable: declaring them manages them, omitting them adopts Kala's value.
+	for _, name := range []string{
+		"title", "phone", "department", "initials", "license_plate",
+		"leader_note", "date_of_employment", "is_leader", "is_planner", "is_finance",
+	} {
+		attr, ok := s.Attributes[name]
+		if !ok {
+			t.Errorf("missing attribute %q", name)
+			continue
+		}
+		if !attr.IsOptional() || !attr.IsComputed() {
+			t.Errorf("%q should be Optional+Computed, got optional=%t computed=%t",
+				name, attr.IsOptional(), attr.IsComputed())
+		}
+	}
+
+	// Read-only: Kala exposes no endpoint to set these, so offering them as
+	// writable would be a promise the provider cannot keep.
+	for _, name := range []string{"private_phone", "flex_start_date", "norm_hours", "is_super_user", "is_visible_in_planner", "worker_id"} {
+		attr, ok := s.Attributes[name]
+		if !ok {
+			t.Errorf("missing attribute %q", name)
+			continue
+		}
+		if attr.IsOptional() {
+			t.Errorf("%q must NOT be settable — Kala has no endpoint for it", name)
+		}
+	}
+}
+
+// The sharpest edge of adoption: adopting an employee must not blank the
+// fields the configuration does not mention. Kala cannot undo a wipe.
+func TestCreateEmployee_AdoptionDoesNotBlankUndeclaredFields(t *testing.T) {
+	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "Existing", IsValidated: true})
+	fi.info = client.WorkerInfo{
+		WorkerNr: 3, WorkerID: 3, Name: "Existing", Email: "e@example.com",
+		Title: "Montør", Department: "Ops", Initials: "EX", Phone: "111",
+		IsLeader: true, IsValidated: true,
+	}
+	r := newEmployeeResource(fi)
+
+	// Configuration declares only the required attributes.
+	m := employeeModelFor(3, "Existing", "e@example.com", true)
+
+	resp := &resource.CreateResponse{State: emptyEmployeeState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: employeePlan(t, m)}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("adopt failed: %s", diagsText(resp.Diagnostics))
+	}
+	if len(fi.fieldSets) != 0 {
+		t.Errorf("adoption wrote fields it was never told to: %+v", fi.fieldSets)
+	}
+	if len(fi.roleSets) != 0 {
+		t.Errorf("adoption changed roles it was never told to: %+v", fi.roleSets)
+	}
+	if fi.dateSet != "" {
+		t.Errorf("adoption wrote date_of_employment: %q", fi.dateSet)
+	}
+
+	// And the employee's real values must survive into state.
+	var got employeeResourceModel
+	resp.State.Get(context.Background(), &got)
+	if got.Department.ValueString() != "Ops" || got.Title.ValueString() != "Montør" {
+		t.Errorf("adopted values lost: department=%q title=%q",
+			got.Department.ValueString(), got.Title.ValueString())
+	}
+}
+
+// An explicitly declared empty string on UPDATE is a real request to clear the
+// field, and must be honoured — unlike the create path.
+func TestUpdateEmployee_ExplicitEmptyStringClearsField(t *testing.T) {
+	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "X", IsValidated: true})
+	r := newEmployeeResource(fi)
+
+	state := employeeModelFor(3, "X", "e@example.com", true)
+	state.LeaderNote = types.StringValue("something")
+
+	plan := state
+	plan.LeaderNote = types.StringValue("")
+
+	resp := &resource.UpdateResponse{State: emptyEmployeeState(t)}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan: employeePlan(t, plan), State: employeeState(t, state),
+	}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("update failed: %s", diagsText(resp.Diagnostics))
+	}
+	if len(fi.fieldSets) != 1 || fi.fieldSets[0].value != "" {
+		t.Errorf("want leader_note cleared, got %+v", fi.fieldSets)
+	}
+}
+
+func TestUpdateEmployee_RoleWriteFailureIsAttributeScoped(t *testing.T) {
+	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "X", IsValidated: true})
+	fi.fieldErr = errors.New("refused")
+	r := newEmployeeResource(fi)
+
+	state := employeeModelFor(3, "X", "e@example.com", true)
+	state.IsPlanner = types.BoolValue(false)
+	plan := state
+	plan.IsPlanner = types.BoolValue(true)
+
+	resp := &resource.UpdateResponse{State: emptyEmployeeState(t)}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan: employeePlan(t, plan), State: employeeState(t, state),
+	}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("want the role write failure to surface")
+	}
+	if !strings.Contains(diagsText(resp.Diagnostics), "is_planner") {
+		t.Errorf("diagnostic should name the attribute: %s", diagsText(resp.Diagnostics))
+	}
+}
+
+func TestUpdateEmployee_DateWriteFailureIsAttributeScoped(t *testing.T) {
+	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "X", IsValidated: true})
+	fi.fieldErr = errors.New("bad date")
+	r := newEmployeeResource(fi)
+
+	state := employeeModelFor(3, "X", "e@example.com", true)
+	plan := state
+	plan.DateOfEmployment = types.StringValue("2026-01-01")
+
+	resp := &resource.UpdateResponse{State: emptyEmployeeState(t)}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan: employeePlan(t, plan), State: employeeState(t, state),
+	}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("want the date write failure to surface")
+	}
+	if !strings.Contains(diagsText(resp.Diagnostics), "date_of_employment") {
+		t.Errorf("diagnostic should name the attribute: %s", diagsText(resp.Diagnostics))
+	}
+}
+
+func TestCreateEmployee_ExplicitFalseRoleIsNotWrittenOnAdopt(t *testing.T) {
+	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "X", IsValidated: true})
+	r := newEmployeeResource(fi)
+
+	m := employeeModelFor(3, "X", "e@example.com", true)
+	m.IsLeader = types.BoolValue(false) // explicitly false
+
+	resp := &resource.CreateResponse{State: emptyEmployeeState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: employeePlan(t, m)}, resp)
+
+	if len(fi.roleSets) != 0 {
+		t.Errorf("a false role on create must not strip an adopted employee's role: %+v", fi.roleSets)
 	}
 }

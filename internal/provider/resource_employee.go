@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -13,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
@@ -104,20 +106,28 @@ func (r *employeeResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 					"allows Terraform to both read and write, so it is the only one with real drift detection.",
 			},
 
-			"title":         schema.StringAttribute{Computed: true, MarkdownDescription: "Job title."},
-			"phone":         schema.StringAttribute{Computed: true, MarkdownDescription: "Work phone number."},
-			"private_phone": schema.StringAttribute{Computed: true, MarkdownDescription: "Private phone number."},
-			"department":    schema.StringAttribute{Computed: true, MarkdownDescription: "Department."},
-			"initials":      schema.StringAttribute{Computed: true, MarkdownDescription: "Initials. Kala's other integrations derive email addresses from these."},
-			"license_plate": schema.StringAttribute{Computed: true, MarkdownDescription: "Vehicle registration recorded against the employee."},
+			"title":         optionalComputedString("Job title."),
+			"phone":         optionalComputedString("Work phone number."),
+			"department":    optionalComputedString("Department."),
+			"initials":      optionalComputedString("Initials. Kala's other integrations derive email addresses from these."),
+			"license_plate": optionalComputedString("Vehicle registration recorded against the employee."),
+			"leader_note":   optionalComputedString("Free-text note visible to leaders."),
 			"date_of_employment": schema.StringAttribute{
-				Computed: true,
-				MarkdownDescription: "Employment start date. Kala returns this as a free-form string rather " +
-					"than a typed date, so it is passed through verbatim.",
+				Optional: true, Computed: true,
+				MarkdownDescription: "Employment start date as `YYYY-MM-DD`.\n\n" +
+					"Kala's write endpoint takes a timestamp plus a GMT offset while its read returns a " +
+					"plain date, and the offset can shift the stored date across midnight. The provider " +
+					"sends midnight UTC at offset 0 so the value round-trips exactly.",
+				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+			},
+
+			"private_phone": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Private phone number. Read-only — Kala exposes no endpoint to set it.",
 			},
 			"flex_start_date": schema.StringAttribute{
 				Computed:            true,
-				MarkdownDescription: "Flex-time start date. A free-form string upstream, like `date_of_employment`.",
+				MarkdownDescription: "Flex-time start date. Read-only — Kala exposes no endpoint to set it.",
 			},
 			"norm_hours": schema.StringAttribute{
 				Computed: true,
@@ -126,12 +136,18 @@ func (r *employeeResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 					"It is passed through verbatim rather than unwrapped, because the shape is undocumented " +
 					"and may vary. Parse it with `jsondecode()` if you need the value.",
 			},
-			"leader_note":           schema.StringAttribute{Computed: true, MarkdownDescription: "Free-text note visible to leaders."},
-			"is_leader":             schema.BoolAttribute{Computed: true, MarkdownDescription: "Whether the employee is a leader."},
-			"is_planner":            schema.BoolAttribute{Computed: true, MarkdownDescription: "Whether the employee has planner rights."},
-			"is_super_user":         schema.BoolAttribute{Computed: true, MarkdownDescription: "Whether the employee is a super user."},
-			"is_finance":            schema.BoolAttribute{Computed: true, MarkdownDescription: "Whether the employee has finance rights."},
-			"is_visible_in_planner": schema.BoolAttribute{Computed: true, MarkdownDescription: "Whether the employee appears in the planner."},
+			"is_leader":  optionalComputedBool("Whether the employee is a leader."),
+			"is_planner": optionalComputedBool("Whether the employee has planner rights."),
+			"is_finance": optionalComputedBool("Whether the employee has finance rights."),
+
+			"is_super_user": schema.BoolAttribute{
+				Computed:            true,
+				MarkdownDescription: "Whether the employee is a super user. Read-only — Kala exposes no endpoint to set it.",
+			},
+			"is_visible_in_planner": schema.BoolAttribute{
+				Computed:            true,
+				MarkdownDescription: "Whether the employee appears in the planner. Read-only — Kala exposes no endpoint to set it.",
+			},
 			"worker_id": schema.Int64Attribute{
 				Computed: true,
 				MarkdownDescription: "Kala's internal worker ID. Observed to equal `employee_number`, but " +
@@ -255,6 +271,14 @@ func (r *employeeResource) Create(ctx context.Context, req resource.CreateReques
 		return
 	}
 
+	// Apply any declared field values. SignUp accepts only number, name, and
+	// email, so everything else needs its own write — and on an adopted
+	// employee this is what brings Kala in line with the configuration.
+	// The empty prior state means "write whatever was declared".
+	if !r.applyFieldChanges(ctx, internal, number, plan, employeeResourceModel{}, &resp.Diagnostics, true) {
+		return
+	}
+
 	if !r.refresh(ctx, &plan, internal, &resp.Diagnostics) {
 		return
 	}
@@ -332,6 +356,10 @@ func (r *employeeResource) Update(ctx context.Context, req resource.UpdateReques
 			resp.Diagnostics.AddError("Could not change the employee's email address", err.Error())
 			return
 		}
+	}
+
+	if !r.applyFieldChanges(ctx, internal, number, plan, state, &resp.Diagnostics, false) {
+		return
 	}
 
 	// Carry adoption status forward — it describes how the resource began.
@@ -428,6 +456,109 @@ func (r *employeeResource) refresh(ctx context.Context, m *employeeResourceModel
 	applyWorker(m, worker)
 	r.enrich(ctx, m, c, diags)
 	return true
+}
+
+// applyFieldChanges writes every settable field whose planned value differs
+// from state, one endpoint per field.
+//
+// Kala has no bulk update: each field is its own endpoint, each verified by
+// read-back. Only changed fields are written, so an apply that touches one
+// attribute does not rewrite the rest.
+func (r *employeeResource) applyFieldChanges(
+	ctx context.Context, c client.InternalClient, number int64,
+	plan, state employeeResourceModel, diags *diag.Diagnostics, creating bool,
+) bool {
+	stringFields := []struct {
+		field     client.WorkerField
+		planned   types.String
+		prior     types.String
+		attribute string
+	}{
+		{client.FieldPhone, plan.Phone, state.Phone, "phone"},
+		{client.FieldTitle, plan.Title, state.Title, "title"},
+		{client.FieldInitials, plan.Initials, state.Initials, "initials"},
+		{client.FieldLicensePlate, plan.LicensePlate, state.LicensePlate, "license_plate"},
+		{client.FieldDepartment, plan.Department, state.Department, "department"},
+		{client.FieldLeaderNote, plan.LeaderNote, state.LeaderNote, "leader_note"},
+	}
+	for _, f := range stringFields {
+		// Unknown or null means the user left it unset and Terraform will fill
+		// it from the refresh — not a change to write.
+		if f.planned.IsUnknown() || f.planned.IsNull() || f.planned.Equal(f.prior) {
+			continue
+		}
+		// On create there is no prior state to compare against, so an empty
+		// value is indistinguishable from "not declared". Writing it would
+		// BLANK the field on an adopted employee who already had one.
+		if creating && f.planned.ValueString() == "" {
+			continue
+		}
+		if err := c.SetWorkerField(ctx, number, f.field, f.planned.ValueString()); err != nil {
+			diags.AddAttributeError(path.Root(f.attribute),
+				"Could not update "+f.attribute, err.Error())
+			return false
+		}
+	}
+
+	roles := []struct {
+		role      client.WorkerRole
+		planned   types.Bool
+		prior     types.Bool
+		attribute string
+	}{
+		{client.RoleLeader, plan.IsLeader, state.IsLeader, "is_leader"},
+		{client.RoleFinance, plan.IsFinance, state.IsFinance, "is_finance"},
+		{client.RolePlanner, plan.IsPlanner, state.IsPlanner, "is_planner"},
+	}
+	for _, rl := range roles {
+		if rl.planned.IsUnknown() || rl.planned.IsNull() || rl.planned.Equal(rl.prior) {
+			continue
+		}
+		// On create, only an explicit true is a request to grant a role. A
+		// false would otherwise strip roles from an adopted employee.
+		if creating && !rl.planned.ValueBool() {
+			continue
+		}
+		if err := c.SetWorkerRole(ctx, number, rl.role, rl.planned.ValueBool()); err != nil {
+			diags.AddAttributeError(path.Root(rl.attribute),
+				"Could not update "+rl.attribute, err.Error())
+			return false
+		}
+	}
+
+	dateDeclared := !plan.DateOfEmployment.IsUnknown() && !plan.DateOfEmployment.IsNull()
+	dateChanged := !plan.DateOfEmployment.Equal(state.DateOfEmployment)
+	dateBlankOnCreate := creating && plan.DateOfEmployment.ValueString() == ""
+
+	if dateDeclared && dateChanged && !dateBlankOnCreate {
+		if err := c.SetWorkerDateOfEmployment(ctx, number, plan.DateOfEmployment.ValueString()); err != nil {
+			diags.AddAttributeError(path.Root("date_of_employment"),
+				"Could not update date_of_employment", err.Error())
+			return false
+		}
+	}
+
+	return true
+}
+
+// optionalComputedString builds a settable string attribute that falls back to
+// whatever Kala already holds when the user does not declare it.
+func optionalComputedString(description string) schema.StringAttribute {
+	return schema.StringAttribute{
+		Optional:            true,
+		Computed:            true,
+		MarkdownDescription: description + " Leave unset to adopt Kala's current value.",
+		PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+	}
+}
+
+func optionalComputedBool(description string) schema.BoolAttribute {
+	return schema.BoolAttribute{
+		Optional:            true,
+		Computed:            true,
+		MarkdownDescription: description + " Leave unset to adopt Kala's current value.",
+		PlanModifiers:       []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
+	}
 }
 
 // enrich fills the WorkerInfo-sourced attributes.

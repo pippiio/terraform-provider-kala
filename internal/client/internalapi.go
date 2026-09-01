@@ -16,9 +16,8 @@ import (
 // undocumented and unversioned, and it is the ONLY place employee activation
 // lives (ADR-002).
 //
-// Guardrail ARCH1.3 permits exactly three writes here — SetValidated (ADR-002),
-// SignUp (employee creation), and SetEmailNew (email change) — and every write
-// must be verified by a read-back (ARCH1.8). Nomenclature differs from webapiv2:
+// Guardrail ARCH1.3 enumerates every write permitted here; see that list before
+// adding another. Every write must be verified by a read-back (ARCH1.8). Nomenclature differs from webapiv2:
 // this API says "worker" and keys on workerNr (ARCH1.4 keeps that vocabulary
 // confined to this file).
 
@@ -102,6 +101,19 @@ type InternalClient interface {
 	// SetWorkerEmail changes a worker's email via /api/SetEmailNew/ and verifies
 	// the result by reading it back (ARCH1.8).
 	SetWorkerEmail(ctx context.Context, workerNr int64, email string) error
+
+	// SetWorkerField sets one string-valued field (phone, title, initials,
+	// license plate, department, leader note) and verifies it by read-back.
+	SetWorkerField(ctx context.Context, workerNr int64, field WorkerField, value string) error
+
+	// SetWorkerRole sets one boolean role (leader, finance, planner) and
+	// verifies it by read-back.
+	SetWorkerRole(ctx context.Context, workerNr int64, role WorkerRole, value bool) error
+
+	// SetWorkerDateOfEmployment sets the employment start date from a plain
+	// YYYY-MM-DD date. The endpoint's timestamp/offset encoding is handled
+	// internally so the value round-trips.
+	SetWorkerDateOfEmployment(ctx context.Context, workerNr int64, date string) error
 
 	// CreateWorker registers a new employee via /Api/SignUp/.
 	//
