@@ -218,6 +218,11 @@ func (r *employeeResource) Create(ctx context.Context, req resource.CreateReques
 	number := plan.EmployeeNumber.ValueInt64()
 	wantActive := plan.Active.ValueBool()
 
+	// Prior state for field convergence. Create has no real prior state, so
+	// each branch seeds only the fields Kala already holds — everything left
+	// null is written, and everything seeded is written only if it differs.
+	prior := employeeResourceModel{}
+
 	existing, err := internal.GetWorker(ctx, number)
 	switch {
 	case err == nil:
@@ -258,9 +263,21 @@ func (r *employeeResource) Create(ctx context.Context, req resource.CreateReques
 			}
 		}
 
+		// Seed the prior email from upstream so convergence issues a write only
+		// on a real difference. If this read fails we leave it null, which
+		// converges unconditionally — the safe direction, since an unconverged
+		// email would make the applied state contradict the plan.
+		if info, infoErr := internal.GetWorkerInfo(ctx, number); infoErr == nil {
+			prior.Email = types.StringValue(info.Email)
+		}
+
 	case errors.Is(err, client.ErrNotFound):
 		// --- create ---
 		plan.Adopted = types.BoolValue(false)
+
+		// SignUp carries the email, so seeding it here stops convergence from
+		// issuing a redundant second write.
+		prior.Email = plan.Email
 
 		if _, err := internal.CreateWorker(ctx, client.NewWorker{
 			Number: number,
@@ -310,7 +327,7 @@ func (r *employeeResource) Create(ctx context.Context, req resource.CreateReques
 	// email, so everything else needs its own write — and on an adopted
 	// employee this is what brings Kala in line with the configuration.
 	// The empty prior state means "write whatever was declared".
-	if !r.applyFieldChanges(ctx, internal, number, plan, employeeResourceModel{}, &resp.Diagnostics) {
+	if !r.applyFieldChanges(ctx, internal, number, plan, prior, &resp.Diagnostics) {
 		return
 	}
 
@@ -384,13 +401,6 @@ func (r *employeeResource) Update(ctx context.Context, req resource.UpdateReques
 				number, state.Name.ValueString(), plan.Name.ValueString(),
 			),
 		)
-	}
-
-	if plan.Email.ValueString() != state.Email.ValueString() {
-		if err := internal.SetWorkerEmail(ctx, number, plan.Email.ValueString()); err != nil {
-			resp.Diagnostics.AddError("Could not change the employee's email address", err.Error())
-			return
-		}
 	}
 
 	if !r.applyFieldChanges(ctx, internal, number, plan, state, &resp.Diagnostics) {
@@ -555,6 +565,17 @@ func (r *employeeResource) applyFieldChanges(
 		if err := c.SetWorkerRole(ctx, number, rl.role, rl.planned.ValueBool()); err != nil {
 			diags.AddAttributeError(path.Root(rl.attribute),
 				"Could not update "+rl.attribute, err.Error())
+			return false
+		}
+	}
+
+	// Email has its own endpoint, like date_of_employment below. It belongs in
+	// this convergence path and not only in Update: the adoption path in Create
+	// never wrote it, while refresh overwrote it from WorkerInfo, so the applied
+	// state contradicted the plan whenever the two differed.
+	if !plan.Email.IsUnknown() && !plan.Email.IsNull() && !plan.Email.Equal(state.Email) {
+		if err := c.SetWorkerEmail(ctx, number, plan.Email.ValueString()); err != nil {
+			diags.AddAttributeError(path.Root("email"), "Could not update email", err.Error())
 			return false
 		}
 	}

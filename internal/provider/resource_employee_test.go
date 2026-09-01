@@ -1461,3 +1461,85 @@ func TestEmployeeSchema_WelcomeEmailIsDocumentedAsCreateOnly(t *testing.T) {
 		t.Error("must warn that sending mail is irreversible")
 	}
 }
+
+// --- F1 regression: email convergence on adoption -------------------------
+
+// Adopting an employee whose upstream email differs from the configuration must
+// CONVERGE it, not silently adopt the upstream value. Returning state that
+// contradicts the plan makes Terraform reject the apply with "Provider produced
+// inconsistent result after apply" — the same failure class as the is_planner
+// bug fixed in 8911ae7, in a path that had no test.
+func TestCreateEmployee_AdoptConvergesDifferingEmail(t *testing.T) {
+	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "Existing", IsValidated: true})
+	fi.info = client.WorkerInfo{
+		WorkerNr: 3, WorkerID: 3, Name: "Existing",
+		Email:       "upstream@example.com",
+		IsValidated: true,
+	}
+	r := newEmployeeResource(fi)
+
+	m := employeeModelFor(3, "Existing", "configured@example.com", true)
+
+	resp := &resource.CreateResponse{State: emptyEmployeeState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: employeePlan(t, m)}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("adopt failed: %s", diagsText(resp.Diagnostics))
+	}
+
+	if len(fi.emailSet) != 1 || fi.emailSet[0].email != "configured@example.com" {
+		t.Errorf("adoption must write the configured email upstream, got %+v", fi.emailSet)
+	}
+
+	var got employeeResourceModel
+	resp.State.Get(context.Background(), &got)
+	if got.Email.ValueString() != "configured@example.com" {
+		t.Errorf("state.email = %q but plan said %q — Terraform will reject this apply",
+			got.Email.ValueString(), "configured@example.com")
+	}
+}
+
+// The matching non-change case: adopting someone whose email already matches
+// must not issue a pointless write.
+func TestCreateEmployee_AdoptMatchingEmailWritesNothing(t *testing.T) {
+	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "Existing", IsValidated: true})
+	fi.info = client.WorkerInfo{
+		WorkerNr: 3, WorkerID: 3, Email: "same@example.com", IsValidated: true,
+	}
+	r := newEmployeeResource(fi)
+
+	m := employeeModelFor(3, "Existing", "same@example.com", true)
+	resp := &resource.CreateResponse{State: emptyEmployeeState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: employeePlan(t, m)}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("adopt failed: %s", diagsText(resp.Diagnostics))
+	}
+	if len(fi.emailSet) != 0 {
+		t.Errorf("no email write expected when it already matches, got %+v", fi.emailSet)
+	}
+}
+
+// Genuine creation carries the email through SignUp, so convergence must not
+// issue a second, redundant SetEmailNew.
+func TestCreateEmployee_GenuineCreateDoesNotRewriteEmail(t *testing.T) {
+	fi := newFakeInternal()
+	r := newEmployeeResource(fi)
+
+	m := employeeModelFor(60, "New Hire", "new@example.com", true)
+	resp := &resource.CreateResponse{State: emptyEmployeeState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: employeePlan(t, m)}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("create failed: %s", diagsText(resp.Diagnostics))
+	}
+	if !fi.createCalled {
+		t.Fatal("CreateWorker was not called")
+	}
+	if fi.created.Email != "new@example.com" {
+		t.Errorf("SignUp should carry the email, got %q", fi.created.Email)
+	}
+	if len(fi.emailSet) != 0 {
+		t.Errorf("SignUp already set the email; a second write is redundant, got %+v", fi.emailSet)
+	}
+}
