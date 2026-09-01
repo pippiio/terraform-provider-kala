@@ -175,9 +175,15 @@ func (p *kalaProvider) DataSources(_ context.Context) []func() datasource.DataSo
 	}
 }
 
-// Resources returns no resources. The Kala API has no DELETE endpoints, so
-// resource design is deliberately deferred — see ADR-001 and the employee
-// resource track.
+// Resources returns the provider's resources.
+//
+// kala_employee (activation state) is deliberately absent: it requires the
+// internal API's workerNr, whose relationship to webapiv2's employeeNumber is
+// unverified. Guardrail ARCH1.9 blocks that translation until it is confirmed
+// against a live tenant, because deactivating the wrong person is serious harm.
+// See ADR-002.
 func (p *kalaProvider) Resources(_ context.Context) []func() resource.Resource {
-	return nil
+	return []func() resource.Resource{
+		NewEmployeeSettingResource,
+	}
 }

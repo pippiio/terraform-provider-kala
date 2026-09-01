@@ -8,6 +8,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 )
 
@@ -113,13 +114,30 @@ func TestProvider_RegistersEmployeesDataSource(t *testing.T) {
 	}
 }
 
-// ADR-001: the provider exposes no resources yet. This test documents that as
-// intentional rather than unfinished.
-func TestProvider_ExposesNoResources(t *testing.T) {
+// Documents exactly which resources exist — and, more importantly, which one
+// deliberately does not.
+func TestProvider_RegistersExpectedResources(t *testing.T) {
 	p := newTestProvider(t)
 
-	if got := p.Resources(context.Background()); len(got) != 0 {
-		t.Errorf("got %d resources, want 0 — resource design is deferred per ADR-001", len(got))
+	var names []string
+	for _, f := range p.Resources(context.Background()) {
+		resp := &resource.MetadataResponse{}
+		f().Metadata(context.Background(), resource.MetadataRequest{ProviderTypeName: "kala"}, resp)
+		names = append(names, resp.TypeName)
+	}
+
+	if !contains(names, "kala_employee_setting") {
+		t.Errorf("kala_employee_setting not registered; got %v", names)
+	}
+
+	// kala_employee manages activation via the internal API's workerNr, whose
+	// relationship to webapiv2's employeeNumber is unverified. ARCH1.9 blocks
+	// that translation until confirmed against a live tenant — deactivating the
+	// wrong person is the harm being avoided. Registering it before then would
+	// be a correctness bug, so this assertion is a guard, not a placeholder.
+	if contains(names, "kala_employee") {
+		t.Error("kala_employee is registered, but ARCH1.9 blocks it until the " +
+			"workerNr/employeeNumber mapping is confirmed against a live tenant (ADR-002)")
 	}
 }
 
