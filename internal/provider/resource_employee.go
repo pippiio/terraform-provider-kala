@@ -119,8 +119,11 @@ func (r *employeeResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				MarkdownDescription: "Flex-time start date. A free-form string upstream, like `date_of_employment`.",
 			},
 			"norm_hours": schema.StringAttribute{
-				Computed:            true,
-				MarkdownDescription: "Contracted normal hours. A string upstream, not a number.",
+				Computed: true,
+				MarkdownDescription: "Contracted normal hours, **as an opaque string**. Kala returns JSON " +
+					"embedded in a string here rather than a number — observed as `{\"normHours\": 37}`. " +
+					"It is passed through verbatim rather than unwrapped, because the shape is undocumented " +
+					"and may vary. Parse it with `jsondecode()` if you need the value.",
 			},
 			"leader_note":           schema.StringAttribute{Computed: true, MarkdownDescription: "Free-text note visible to leaders."},
 			"is_leader":             schema.BoolAttribute{Computed: true, MarkdownDescription: "Whether the employee is a leader."},
