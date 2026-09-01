@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -131,12 +132,21 @@ func (r *employeeResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			"is_super_user":         schema.BoolAttribute{Computed: true, MarkdownDescription: "Whether the employee is a super user."},
 			"is_finance":            schema.BoolAttribute{Computed: true, MarkdownDescription: "Whether the employee has finance rights."},
 			"is_visible_in_planner": schema.BoolAttribute{Computed: true, MarkdownDescription: "Whether the employee appears in the planner."},
-			"worker_id":             schema.Int64Attribute{Computed: true, MarkdownDescription: "Kala's internal worker ID. Observed to equal `employee_number`, but exposed separately in case they ever diverge."},
+			"worker_id": schema.Int64Attribute{
+				Computed: true,
+				MarkdownDescription: "Kala's internal worker ID. Observed to equal `employee_number`, but " +
+					"exposed separately in case they ever diverge.",
+				// Stable for the life of the resource, so hold the known value
+				// rather than showing "(known after apply)" on every update.
+				PlanModifiers: []planmodifier.Int64{int64planmodifier.UseStateForUnknown()},
+			},
 			"adopted": schema.BoolAttribute{
 				Computed: true,
 				MarkdownDescription: "True when this resource took over an employee that already existed in Kala " +
 					"rather than creating one. Useful for spotting configurations that assume they provisioned " +
 					"a person they actually inherited.",
+				// Describes how the resource began; it never changes afterwards.
+				PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
 			},
 		},
 	}
