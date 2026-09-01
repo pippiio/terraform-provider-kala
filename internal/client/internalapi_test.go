@@ -1,0 +1,331 @@
+package client
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+// internalMock stands in for the app API: the SignIn -> SelectCompany handshake
+// plus Workers, SetValidated, and SignUp.
+type internalMock struct {
+	srv *httptest.Server
+
+	signIns    int32
+	selects    int32
+	workers    map[int64]*wireWorker
+	lastSetVal *wireSetValidatedRequest
+	lastSignUp *wireSignUpRequest
+
+	signInStatus   int
+	setValStatus   int
+	signUpStatus   int
+	setValNoEffect bool // simulate a 200 that does not actually change state
+}
+
+func newInternalMock(t *testing.T) *internalMock {
+	t.Helper()
+	m := &internalMock{workers: map[int64]*wireWorker{}}
+
+	m.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body := make([]byte, r.ContentLength)
+		if r.ContentLength > 0 {
+			_, _ = r.Body.Read(body)
+		}
+
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/Auth/SignIn/"):
+			atomic.AddInt32(&m.signIns, 1)
+			if m.signInStatus != 0 {
+				w.WriteHeader(m.signInStatus)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(wireSignInResponse{
+				GlobalUserID:     38357,
+				SecureLoginToken: "secure-login-token",
+				Companies:        []wireCompany{{ID: 17221, Name: "TechChapter"}},
+			})
+
+		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
+			atomic.AddInt32(&m.selects, 1)
+			_ = json.NewEncoder(w).Encode(wireSelectCompanyResponse{
+				GlobalCompanyName: "TechChapter",
+				Token:             "session-token",
+			})
+
+		case strings.HasSuffix(r.URL.Path, "/api/Workers/"):
+			if got := r.Header.Get("kauthtoken"); got != "session-token" {
+				t.Errorf("Workers called with kauthtoken %q", got)
+			}
+			out := make([]wireWorker, 0, len(m.workers))
+			for _, wk := range m.workers {
+				out = append(out, *wk)
+			}
+			_ = json.NewEncoder(w).Encode(out)
+
+		case strings.HasSuffix(r.URL.Path, "/api/SetValidated/"):
+			if m.setValStatus != 0 {
+				w.WriteHeader(m.setValStatus)
+				return
+			}
+			if r.Header.Get("kacompany") == "" {
+				t.Error("SetValidated requires the kacompany header")
+			}
+			var req wireSetValidatedRequest
+			_ = json.Unmarshal(body, &req)
+			m.lastSetVal = &req
+			if !m.setValNoEffect {
+				if wk, ok := m.workers[req.WorkerNr]; ok {
+					wk.IsValidated = req.IsValidated
+				}
+			}
+			w.WriteHeader(http.StatusOK)
+
+		case strings.HasSuffix(r.URL.Path, "/Api/SignUp/"):
+			if m.signUpStatus != 0 {
+				w.WriteHeader(m.signUpStatus)
+				return
+			}
+			var req wireSignUpRequest
+			_ = json.Unmarshal(body, &req)
+			m.lastSignUp = &req
+			nr := req.MedarbejderNr
+			m.workers[nr] = &wireWorker{WorkerNr: &nr, Name: req.Name, IsValidated: true}
+			w.WriteHeader(http.StatusOK)
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+
+	t.Cleanup(m.srv.Close)
+	return m
+}
+
+func (m *internalMock) addWorker(nr int64, name string, validated bool) {
+	n := nr
+	m.workers[nr] = &wireWorker{WorkerNr: &n, Name: name, IsValidated: validated}
+}
+
+func (m *internalMock) client() InternalClient {
+	return NewInternal(InternalConfig{
+		Endpoint:     m.srv.URL,
+		Username:     "user@example.com",
+		Password:     "hunter2",
+		MaxRetries:   1,
+		Timeout:      5 * time.Second,
+		retryBaseDur: time.Microsecond,
+	})
+}
+
+// --- authentication -------------------------------------------------------
+
+func TestInternal_SignInSelectCompanyHandshake(t *testing.T) {
+	m := newInternalMock(t)
+	m.addWorker(1, "Alice", true)
+
+	if _, err := m.client().ListWorkers(context.Background()); err != nil {
+		t.Fatalf("ListWorkers: %v", err)
+	}
+
+	if got := atomic.LoadInt32(&m.signIns); got != 1 {
+		t.Errorf("SignIn calls = %d, want 1", got)
+	}
+	if got := atomic.LoadInt32(&m.selects); got != 1 {
+		t.Errorf("SelectCompany calls = %d, want 1", got)
+	}
+}
+
+// The handshake is expensive; a client must not repeat it per request.
+func TestInternal_SessionIsReusedAcrossCalls(t *testing.T) {
+	m := newInternalMock(t)
+	m.addWorker(1, "Alice", true)
+	c := m.client()
+
+	for i := 0; i < 3; i++ {
+		if _, err := c.ListWorkers(context.Background()); err != nil {
+			t.Fatalf("ListWorkers: %v", err)
+		}
+	}
+
+	if got := atomic.LoadInt32(&m.signIns); got != 1 {
+		t.Errorf("SignIn calls = %d, want 1 — the session must be cached", got)
+	}
+}
+
+func TestInternal_MissingCredentialsIsAClearError(t *testing.T) {
+	c := NewInternal(InternalConfig{Endpoint: "https://example.test"})
+
+	_, err := c.ListWorkers(context.Background())
+	if err == nil {
+		t.Fatal("want an error when username/password are absent")
+	}
+	for _, want := range []string{"KALA_USERNAME", "KALA_PASSWORD"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should name %s, got %q", want, err.Error())
+		}
+	}
+}
+
+// SEC1.3: the password must never reach an error message.
+func TestInternal_PasswordNeverAppearsInErrors(t *testing.T) {
+	const password = "super-secret-password"
+
+	m := newInternalMock(t)
+	m.signInStatus = http.StatusUnauthorized
+
+	c := NewInternal(InternalConfig{
+		Endpoint: m.srv.URL, Username: "u", Password: password,
+		retryBaseDur: time.Microsecond,
+	})
+
+	_, err := c.ListWorkers(context.Background())
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if strings.Contains(err.Error(), password) {
+		t.Fatalf("password leaked into the error: %q", err.Error())
+	}
+}
+
+// --- activation (ADR-002) -------------------------------------------------
+
+func TestInternal_SetWorkerValidatedDeactivates(t *testing.T) {
+	m := newInternalMock(t)
+	m.addWorker(42, "Bob", true)
+
+	if err := m.client().SetWorkerValidated(context.Background(), 42, false); err != nil {
+		t.Fatalf("SetWorkerValidated: %v", err)
+	}
+
+	if m.lastSetVal == nil {
+		t.Fatal("SetValidated was never called")
+	}
+	if m.lastSetVal.WorkerNr != 42 || m.lastSetVal.IsValidated {
+		t.Errorf("sent %+v, want {WorkerNr:42 IsValidated:false}", *m.lastSetVal)
+	}
+	if m.workers[42].IsValidated {
+		t.Error("worker should be deactivated")
+	}
+}
+
+// ARCH1.8: HTTP 200 is not proof. A write that does not take effect must fail.
+func TestInternal_SetWorkerValidatedFailsWhenUnverified(t *testing.T) {
+	m := newInternalMock(t)
+	m.addWorker(42, "Bob", true)
+	m.setValNoEffect = true // 200 OK, but nothing changes
+
+	err := m.client().SetWorkerValidated(context.Background(), 42, false)
+	if err == nil {
+		t.Fatal("an unverified deactivation must fail — a silent no-op would leave a departed employee active")
+	}
+	if !strings.Contains(err.Error(), "reads back as") {
+		t.Errorf("error should report the read-back mismatch, got %q", err.Error())
+	}
+}
+
+func TestInternal_SetWorkerValidatedPropagatesHTTPError(t *testing.T) {
+	m := newInternalMock(t)
+	m.addWorker(42, "Bob", true)
+	m.setValStatus = http.StatusForbidden
+
+	if err := m.client().SetWorkerValidated(context.Background(), 42, false); err == nil {
+		t.Fatal("want the HTTP failure to surface")
+	}
+}
+
+func TestInternal_GetWorkerNotFound(t *testing.T) {
+	m := newInternalMock(t)
+	m.addWorker(1, "Alice", true)
+
+	_, err := m.client().GetWorker(context.Background(), 999)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("want ErrNotFound, got %v", err)
+	}
+}
+
+// --- creation (/Api/SignUp/) ----------------------------------------------
+
+func TestInternal_CreateWorkerSendsMedarbejderNr(t *testing.T) {
+	m := newInternalMock(t)
+
+	got, err := m.client().CreateWorker(context.Background(), NewWorker{
+		Number: 2, Email: "test@example.com", Name: "Test Mogens",
+	})
+	if err != nil {
+		t.Fatalf("CreateWorker: %v", err)
+	}
+
+	if m.lastSignUp == nil {
+		t.Fatal("SignUp was never called")
+	}
+	if m.lastSignUp.MedarbejderNr != 2 {
+		t.Errorf("medarbejderNr = %d, want 2", m.lastSignUp.MedarbejderNr)
+	}
+	if m.lastSignUp.Email != "test@example.com" || m.lastSignUp.Name != "Test Mogens" {
+		t.Errorf("sent %+v", *m.lastSignUp)
+	}
+	if got.WorkerNr != 2 {
+		t.Errorf("returned workerNr = %d, want 2", got.WorkerNr)
+	}
+}
+
+func TestInternal_CreateWorkerRequiresAllFields(t *testing.T) {
+	m := newInternalMock(t)
+	c := m.client()
+
+	cases := []struct {
+		name string
+		in   NewWorker
+	}{
+		{"no number", NewWorker{Email: "a@b.c", Name: "N"}},
+		{"no name", NewWorker{Number: 1, Email: "a@b.c"}},
+		{"no email", NewWorker{Number: 1, Name: "N"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := c.CreateWorker(context.Background(), tc.in); err == nil {
+				t.Error("want a validation error before any request is made")
+			}
+		})
+	}
+}
+
+// The read-back is also the experiment that would reveal a medarbejderNr /
+// workerNr mismatch, so its failure message must say so.
+func TestInternal_CreateWorkerUnverifiedMentionsIdentifierMismatch(t *testing.T) {
+	m := newInternalMock(t)
+	m.signUpStatus = http.StatusOK // accepted, but the mock records nothing
+
+	// Override: accept SignUp but never add the worker.
+	m.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/Auth/SignIn/"):
+			_ = json.NewEncoder(w).Encode(wireSignInResponse{
+				SecureLoginToken: "t", Companies: []wireCompany{{ID: 1}},
+			})
+		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
+			_ = json.NewEncoder(w).Encode(wireSelectCompanyResponse{Token: "session-token"})
+		case strings.HasSuffix(r.URL.Path, "/api/Workers/"):
+			_, _ = w.Write([]byte(`[]`)) // the new employee never appears
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	})
+
+	_, err := m.client().CreateWorker(context.Background(), NewWorker{
+		Number: 2, Email: "a@b.c", Name: "N",
+	})
+	if err == nil {
+		t.Fatal("want an error when the created employee cannot be found")
+	}
+	if !strings.Contains(err.Error(), "medarbejderNr") {
+		t.Errorf("error should flag the possible identifier mismatch, got %q", err.Error())
+	}
+}

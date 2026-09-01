@@ -167,9 +167,16 @@ func (c *webAPIv2) attempt(ctx context.Context, method, target string) ([]byte, 
 	}
 	defer func() { _ = resp.Body.Close() }() // GO1.1
 
+	return readBody(resp)
+}
+
+// readBody classifies the response and returns the body on success.
+//
+// Shared by both API clients. A non-2xx body is never decoded — its shape is
+// undocumented — but a bounded, sanitized sample is carried as error context
+// (risk R6).
+func readBody(resp *http.Response) ([]byte, error) {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		// Never decode a non-2xx body: its shape is undocumented. Sample it
-		// only for human-readable context, sanitized and length-bounded.
 		sample, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodySample))
 		return nil, classifyStatus(resp.StatusCode, redactSensitiveValues(string(sample)))
 	}
