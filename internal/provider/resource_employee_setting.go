@@ -126,10 +126,11 @@ func (r *employeeSettingResource) validateKey(ctx context.Context, key string, a
 		return "", nil
 	}
 
-	existing, listErr := r.client.ListSettingKeys(ctx)
+	scan, listErr := r.client.ScanSettingKeys(ctx)
 	if listErr != nil {
 		return "", fmt.Errorf("could not list existing setting keys to validate %q: %w", key, listErr)
 	}
+	existing := scan.Keys
 
 	for _, k := range existing {
 		if k == key {

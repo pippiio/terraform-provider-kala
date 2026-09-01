@@ -39,9 +39,12 @@ type Client interface {
 	// only to overwrite its value. Callers should validate the key first.
 	ApplyEmployeeSetting(ctx context.Context, employeeNumber int64, s Setting, meta SettingMetadata) error
 
-	// ListSettingKeys returns every setting key in use across the account,
+	// ScanSettingKeys surveys the account for every setting key in use,
 	// sorted and deduplicated. It backs the unknown-key guard.
-	ListSettingKeys(ctx context.Context) ([]string, error)
+	//
+	// The survey is bounded, so the result reports its own completeness
+	// rather than only its findings — see SettingKeyScan.
+	ScanSettingKeys(ctx context.Context) (SettingKeyScan, error)
 }
 
 // Employee is the provider-owned representation of a person in Kala.

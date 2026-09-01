@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -200,5 +201,101 @@ func TestClosestKey_NoSuggestionWhenNothingIsClose(t *testing.T) {
 func TestClosestKey_EmptyCandidateSet(t *testing.T) {
 	if got := ClosestKey("anything", nil); got != "" {
 		t.Errorf("ClosestKey = %q, want empty", got)
+	}
+}
+
+// --- F4: a bounded survey must say that it was bounded --------------------
+//
+// ScanSettingKeys stops after maxDeepScanEmployees and skips employees whose
+// full record cannot be fetched. Both are deliberate. What is not deliberate is
+// doing either silently: the guard downstream tells a user that a key exists
+// nowhere on their account, and that claim is only honest if the whole account
+// was actually examined.
+
+func settingsScanServer(t *testing.T, employees int) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ActiveEmployeesList" {
+			var b strings.Builder
+			b.WriteString("[")
+			for i := 1; i <= employees; i++ {
+				if i > 1 {
+					b.WriteString(",")
+				}
+				fmt.Fprintf(&b, `{"number":%d,"name":"E%d","settings":[{"key":"listed","value":"v"}]}`, i, i)
+			}
+			b.WriteString("]")
+			_, _ = w.Write([]byte(b.String()))
+			return
+		}
+		_, _ = w.Write([]byte(`{"number":1,"name":"E","settings":[{"key":"deep_only","value":"v"}]}`))
+	}))
+}
+
+func TestScanSettingKeys_SmallAccountIsComplete(t *testing.T) {
+	srv := settingsScanServer(t, 3)
+	defer srv.Close()
+
+	scan, err := newWebAPIv2(testConfig(srv.URL)).ScanSettingKeys(context.Background())
+	if err != nil {
+		t.Fatalf("ScanSettingKeys: %v", err)
+	}
+	if !scan.Complete() {
+		t.Errorf("a 3-employee account fits well inside the cap; scan should be complete: %+v", scan)
+	}
+	if scan.Employees != 3 || scan.Scanned != 3 || scan.Failed != 0 {
+		t.Errorf("got %+v, want Employees=3 Scanned=3 Failed=0", scan)
+	}
+}
+
+func TestScanSettingKeys_TruncationIsReportedNotHidden(t *testing.T) {
+	srv := settingsScanServer(t, maxDeepScanEmployees+40)
+	defer srv.Close()
+
+	scan, err := newWebAPIv2(testConfig(srv.URL)).ScanSettingKeys(context.Background())
+	if err != nil {
+		t.Fatalf("ScanSettingKeys: %v", err)
+	}
+	if scan.Complete() {
+		t.Error("the deep scan stopped at the cap; reporting the result as complete is a lie")
+	}
+	if scan.Employees != maxDeepScanEmployees+40 {
+		t.Errorf("Employees = %d, want %d", scan.Employees, maxDeepScanEmployees+40)
+	}
+	if scan.Scanned != maxDeepScanEmployees {
+		t.Errorf("Scanned = %d, want %d", scan.Scanned, maxDeepScanEmployees)
+	}
+}
+
+func TestScanSettingKeys_FailedFetchesAreCountedAndMakeItIncomplete(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ActiveEmployeesList" {
+			_, _ = w.Write([]byte(`[
+				{"number":1,"name":"A","settings":[{"key":"listed","value":"v"}]},
+				{"number":2,"name":"B","settings":[{"key":"listed","value":"v"}]}
+			]`))
+			return
+		}
+		if r.URL.Query().Get("employeeNumber") == "2" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write([]byte(`{"number":1,"name":"A","settings":[{"key":"deep_only","value":"v"}]}`))
+	}))
+	defer srv.Close()
+
+	scan, err := newWebAPIv2(testConfig(srv.URL)).ScanSettingKeys(context.Background())
+	if err != nil {
+		t.Fatalf("ScanSettingKeys: %v", err)
+	}
+	if scan.Failed != 1 {
+		t.Errorf("Failed = %d, want 1", scan.Failed)
+	}
+	if scan.Complete() {
+		t.Error("one employee's record could not be read; the survey is not complete")
+	}
+	// The keys it did reach must still come back — degraded, not empty.
+	if len(scan.Keys) == 0 {
+		t.Error("a partial scan must still return the keys it found")
 	}
 }

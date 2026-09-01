@@ -31,6 +31,10 @@ type fakeClient struct {
 	applyErr      error
 	settingKeys   []string
 	keysErr       error
+
+	// scanPartial, when its Employees field is non-zero, is returned verbatim
+	// so a test can describe a survey that did not cover the whole account.
+	scanPartial client.SettingKeyScan
 }
 
 func (f *fakeClient) Ping(context.Context) error {
@@ -54,8 +58,16 @@ func (f *fakeClient) ApplyEmployeeSetting(_ context.Context, n int64, s client.S
 	return f.applyErr
 }
 
-func (f *fakeClient) ListSettingKeys(context.Context) ([]string, error) {
-	return f.settingKeys, f.keysErr
+func (f *fakeClient) ScanSettingKeys(context.Context) (client.SettingKeyScan, error) {
+	if f.keysErr != nil {
+		return client.SettingKeyScan{}, f.keysErr
+	}
+	// A test that only sets settingKeys means "a complete survey of these".
+	if f.scanPartial.Employees == 0 {
+		n := len(f.settingKeys)
+		return client.SettingKeyScan{Keys: f.settingKeys, Employees: n, Scanned: n}, nil
+	}
+	return f.scanPartial, nil
 }
 
 var _ client.Client = (*fakeClient)(nil)

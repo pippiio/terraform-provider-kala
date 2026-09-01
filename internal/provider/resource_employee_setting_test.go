@@ -295,3 +295,64 @@ func settingModelFor(number int64, key, value string) employeeSettingModel {
 		AllowNewKey:    types.BoolValue(false),
 	}
 }
+
+// --- F4: the guard must not claim more than the survey supports -----------
+
+func TestValidateKey_PartialSurveySaysSoInsteadOfClaimingTheKeyExistsNowhere(t *testing.T) {
+	fc := &fakeClient{
+		settingKeys: []string{"default_work_type"},
+		scanPartial: client.SettingKeyScan{
+			Keys: []string{"default_work_type"}, Employees: 640, Scanned: 200, Failed: 0,
+		},
+	}
+	r := &employeeSettingResource{client: fc}
+
+	_, err := r.validateKey(context.Background(), "favorite_materials", false)
+	if err == nil {
+		t.Fatal("an unknown key must still be rejected — settings cannot be deleted")
+	}
+
+	msg := err.Error()
+	if strings.Contains(msg, "is not in use anywhere on this Kala account") {
+		t.Error("only 200 of 640 employees were surveyed; claiming the key exists nowhere is false")
+	}
+	for _, want := range []string{"200", "640", "allow_new_key"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("diagnostic does not mention %q:\n%s", want, msg)
+		}
+	}
+}
+
+func TestValidateKey_CompleteSurveyStillClaimsTheKeyExistsNowhere(t *testing.T) {
+	fc := &fakeClient{
+		scanPartial: client.SettingKeyScan{
+			Keys: []string{"default_work_type"}, Employees: 12, Scanned: 12, Failed: 0,
+		},
+	}
+	r := &employeeSettingResource{client: fc}
+
+	_, err := r.validateKey(context.Background(), "favorite_materials", false)
+	if err == nil {
+		t.Fatal("want a rejection")
+	}
+	if !strings.Contains(err.Error(), "is not in use anywhere on this Kala account") {
+		t.Errorf("a complete survey supports the stronger claim:\n%s", err.Error())
+	}
+}
+
+func TestValidateKey_PartialSurveyStillSuggestsTheNearestKey(t *testing.T) {
+	fc := &fakeClient{
+		scanPartial: client.SettingKeyScan{
+			Keys: []string{"default_work_type"}, Employees: 640, Scanned: 200, Failed: 3,
+		},
+	}
+	r := &employeeSettingResource{client: fc}
+
+	_, err := r.validateKey(context.Background(), "default_work_typ", false)
+	if err == nil {
+		t.Fatal("want a rejection")
+	}
+	if !strings.Contains(err.Error(), `Did you mean "default_work_type"?`) {
+		t.Errorf("a partial survey must still suggest what it did find:\n%s", err.Error())
+	}
+}

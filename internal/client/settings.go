@@ -204,3 +204,21 @@ func min3(a, b, c int) int {
 	}
 	return m
 }
+
+// SettingKeyScan is the result of surveying an account's setting keys.
+// Not yet implemented.
+type SettingKeyScan struct {
+	Keys      []string
+	Employees int
+	Scanned   int
+	Failed    int
+}
+
+// Complete reports whether the whole account was examined. Not yet implemented.
+func (s SettingKeyScan) Complete() bool { return true }
+
+// ScanSettingKeys surveys the account's setting keys. Not yet implemented.
+func (c *webAPIv2) ScanSettingKeys(ctx context.Context) (SettingKeyScan, error) {
+	keys, err := c.ListSettingKeys(ctx)
+	return SettingKeyScan{Keys: keys}, err
+}
