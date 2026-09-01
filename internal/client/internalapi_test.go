@@ -6,7 +6,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -565,5 +567,123 @@ func TestInternal_SetWorkerEmailNeedsCredentials(t *testing.T) {
 	c := NewInternal(InternalConfig{Endpoint: "https://example.test"})
 	if err := c.SetWorkerEmail(context.Background(), 1, "a@b.c"); err == nil {
 		t.Error("want a credentials error")
+	}
+}
+
+// --- session reuse under concurrency --------------------------------------
+
+// Terraform applies resources in parallel (default 10). Ten employees must
+// still produce exactly ONE login, not ten.
+func TestInternal_ConcurrentCallsShareOneLogin(t *testing.T) {
+	var signIns, selects int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/Auth/SignIn/"):
+			atomic.AddInt32(&signIns, 1)
+			time.Sleep(10 * time.Millisecond) // widen the race window
+			_, _ = w.Write([]byte(`{"secureLoginToken":"t","companies":[{"id":17221}]}`))
+		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
+			atomic.AddInt32(&selects, 1)
+			_, _ = w.Write([]byte(`{"token":"session-token"}`))
+		default:
+			_, _ = w.Write([]byte(`[{"workerNr":1,"name":"A"}]`))
+		}
+	}))
+	defer srv.Close()
+
+	c := NewInternal(InternalConfig{
+		Endpoint: srv.URL, Username: "u", Password: "p", retryBaseDur: time.Microsecond,
+	})
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 10)
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := c.ListWorkers(context.Background()); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		t.Errorf("concurrent ListWorkers: %v", err)
+	}
+	if got := atomic.LoadInt32(&signIns); got != 1 {
+		t.Errorf("SignIn calls = %d, want 1 — ten parallel resources must share one session", got)
+	}
+	if got := atomic.LoadInt32(&selects); got != 1 {
+		t.Errorf("SelectCompany calls = %d, want 1", got)
+	}
+}
+
+// A session that expires mid-apply must be re-established rather than failing
+// every remaining resource. Without this, a long apply dies partway through.
+func TestInternal_ExpiredSessionIsReAuthenticated(t *testing.T) {
+	var signIns int32
+	var tokenGeneration int32 = 1
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/Auth/SignIn/"):
+			atomic.AddInt32(&signIns, 1)
+			_, _ = w.Write([]byte(`{"secureLoginToken":"t","companies":[{"id":1}]}`))
+		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
+			gen := atomic.LoadInt32(&tokenGeneration)
+			_, _ = w.Write([]byte(`{"token":"session-token-` + strconv.Itoa(int(gen)) + `"}`))
+		default:
+			// The first-generation token is rejected; the second is accepted.
+			if r.Header.Get("kauthtoken") == "session-token-1" {
+				atomic.StoreInt32(&tokenGeneration, 2)
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			_, _ = w.Write([]byte(`[{"workerNr":1,"name":"A"}]`))
+		}
+	}))
+	defer srv.Close()
+
+	c := NewInternal(InternalConfig{
+		Endpoint: srv.URL, Username: "u", Password: "p", retryBaseDur: time.Microsecond,
+	})
+
+	if _, err := c.ListWorkers(context.Background()); err != nil {
+		t.Fatalf("an expired session should be renewed transparently, got: %v", err)
+	}
+	if got := atomic.LoadInt32(&signIns); got != 2 {
+		t.Errorf("SignIn calls = %d, want 2 (initial + one renewal)", got)
+	}
+}
+
+// Renewal must not loop forever against genuinely bad credentials.
+func TestInternal_PersistentUnauthorizedDoesNotLoop(t *testing.T) {
+	var signIns int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/Auth/SignIn/"):
+			atomic.AddInt32(&signIns, 1)
+			_, _ = w.Write([]byte(`{"secureLoginToken":"t","companies":[{"id":1}]}`))
+		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
+			_, _ = w.Write([]byte(`{"token":"tok"}`))
+		default:
+			w.WriteHeader(http.StatusUnauthorized) // always rejects
+		}
+	}))
+	defer srv.Close()
+
+	c := NewInternal(InternalConfig{
+		Endpoint: srv.URL, Username: "u", Password: "p", retryBaseDur: time.Microsecond,
+	})
+
+	if _, err := c.ListWorkers(context.Background()); !errors.Is(err, ErrUnauthorized) {
+		t.Errorf("want ErrUnauthorized, got %v", err)
+	}
+	if got := atomic.LoadInt32(&signIns); got > 2 {
+		t.Errorf("SignIn calls = %d — renewal must be attempted at most once", got)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -358,6 +359,57 @@ func (c *internalAPI) session(ctx context.Context) (token string, companyID int6
 	return c.token, c.companyID, nil
 }
 
+// invalidateSession clears the cached token so the next call re-authenticates.
+//
+// Only clears the generation it was told about, so a token another goroutine
+// already refreshed is not thrown away.
+func (c *internalAPI) invalidateSession(staleToken string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.token == staleToken {
+		c.token = ""
+	}
+}
+
+// authedRequest performs a request carrying the session headers, renewing the
+// session once if the server rejects the token.
+//
+// Kala does not document a session lifetime. Without renewal a long apply would
+// fail every resource after the token expires — the exact case a
+// ten-employee run would hit. Renewal is attempted at most once, so genuinely
+// bad credentials fail fast instead of looping.
+func (c *internalAPI) authedRequest(
+	ctx context.Context, method, path string, body []byte, contentType string,
+) ([]byte, error) {
+	token, companyID, err := c.session(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	headers := func(tok string, cid int64) map[string]string {
+		return map[string]string{
+			"kauthtoken": tok,
+			"kacompany":  strconv.FormatInt(cid, 10),
+		}
+	}
+
+	raw, err := c.requestWithContentType(ctx, method, path, body, contentType, headers(token, companyID))
+	if err == nil || !errors.Is(err, ErrUnauthorized) {
+		return raw, err
+	}
+
+	// The token was rejected: drop it and try once with a fresh session.
+	c.invalidateSession(token)
+
+	token, companyID, err2 := c.session(ctx)
+	if err2 != nil {
+		// Report the original rejection; the re-login failure is the symptom.
+		return nil, err
+	}
+
+	return c.requestWithContentType(ctx, method, path, body, contentType, headers(token, companyID))
+}
+
 func (c *internalAPI) signIn(ctx context.Context) (wireSignInResponse, error) {
 	body, err := json.Marshal(wireSignInRequest{
 		Username: c.cfg.Username,
@@ -474,14 +526,7 @@ func (c *internalAPI) attempt(req *http.Request) ([]byte, error) {
 
 // ListWorkers returns all workers visible to the session.
 func (c *internalAPI) ListWorkers(ctx context.Context) ([]Worker, error) {
-	token, _, err := c.session(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	raw, err := c.request(ctx, http.MethodGet, "/api/Workers/", nil, map[string]string{
-		"kauthtoken": token,
-	})
+	raw, err := c.authedRequest(ctx, http.MethodGet, "/api/Workers/", nil, contentTypeHeader)
 	if err != nil {
 		return nil, err
 	}
@@ -531,20 +576,12 @@ func (c *internalAPI) GetWorker(ctx context.Context, workerNr int64) (Worker, er
 // explicitly excludes this path from graceful degradation — a failure here must
 // fail the apply.
 func (c *internalAPI) SetWorkerValidated(ctx context.Context, workerNr int64, validated bool) error {
-	token, companyID, err := c.session(ctx)
-	if err != nil {
-		return err
-	}
-
 	body, err := json.Marshal(wireSetValidatedRequest{WorkerNr: workerNr, IsValidated: validated})
 	if err != nil {
 		return fmt.Errorf("kala: building SetValidated request: %w", err)
 	}
 
-	if _, err := c.request(ctx, http.MethodPost, "/api/SetValidated/", body, map[string]string{
-		"kauthtoken": token,
-		"kacompany":  strconv.FormatInt(companyID, 10),
-	}); err != nil {
+	if _, err := c.authedRequest(ctx, http.MethodPost, "/api/SetValidated/", body, contentTypeHeader); err != nil {
 		return fmt.Errorf("kala: SetValidated for worker %d: %w", workerNr, err)
 	}
 
@@ -578,11 +615,6 @@ func (c *internalAPI) CreateWorker(ctx context.Context, in NewWorker) (Worker, e
 		return Worker{}, fmt.Errorf("email is required to create an employee")
 	}
 
-	token, companyID, err := c.session(ctx)
-	if err != nil {
-		return Worker{}, err
-	}
-
 	body, err := json.Marshal(wireSignUpRequest{
 		MedarbejderNr: in.Number,
 		Email:         in.Email,
@@ -592,10 +624,7 @@ func (c *internalAPI) CreateWorker(ctx context.Context, in NewWorker) (Worker, e
 		return Worker{}, fmt.Errorf("kala: building sign-up request: %w", err)
 	}
 
-	if _, err := c.request(ctx, http.MethodPost, "/Api/SignUp/", body, map[string]string{
-		"kauthtoken": token,
-		"kacompany":  strconv.FormatInt(companyID, 10),
-	}); err != nil {
+	if _, err := c.authedRequest(ctx, http.MethodPost, "/Api/SignUp/", body, contentTypeHeader); err != nil {
 		return Worker{}, fmt.Errorf("kala: creating employee %d: %w", in.Number, err)
 	}
 
@@ -619,16 +648,8 @@ func (c *internalAPI) CreateWorker(ctx context.Context, in NewWorker) (Worker, e
 // with GetWorker before calling this, or they will pay three pointless retries
 // and receive ErrServer instead of ErrNotFound.
 func (c *internalAPI) GetWorkerInfo(ctx context.Context, workerNr int64) (WorkerInfo, error) {
-	token, companyID, err := c.session(ctx)
-	if err != nil {
-		return WorkerInfo{}, err
-	}
-
-	raw, err := c.request(ctx, http.MethodGet,
-		"/api/WorkerInfo/?workerNr="+strconv.FormatInt(workerNr, 10), nil, map[string]string{
-			"kauthtoken": token,
-			"kacompany":  strconv.FormatInt(companyID, 10),
-		})
+	raw, err := c.authedRequest(ctx, http.MethodGet,
+		"/api/WorkerInfo/?workerNr="+strconv.FormatInt(workerNr, 10), nil, contentTypeHeader)
 	if err != nil {
 		return WorkerInfo{}, fmt.Errorf("kala: reading worker info for %d: %w", workerNr, err)
 	}
@@ -653,20 +674,12 @@ func (c *internalAPI) SetWorkerEmail(ctx context.Context, workerNr int64, email 
 		return fmt.Errorf("email must not be empty")
 	}
 
-	token, companyID, err := c.session(ctx)
-	if err != nil {
-		return err
-	}
-
 	body, err := json.Marshal(wireSetEmailRequest{WorkerNr: workerNr, Email: email})
 	if err != nil {
 		return fmt.Errorf("kala: building SetEmail request: %w", err)
 	}
 
-	if _, err := c.request(ctx, http.MethodPost, "/api/SetEmailNew/", body, map[string]string{
-		"kauthtoken": token,
-		"kacompany":  strconv.FormatInt(companyID, 10),
-	}); err != nil {
+	if _, err := c.authedRequest(ctx, http.MethodPost, "/api/SetEmailNew/", body, contentTypeHeader); err != nil {
 		return fmt.Errorf("kala: setting email for worker %d: %w", workerNr, err)
 	}
 
@@ -702,22 +715,13 @@ func (c *internalAPI) SendWelcomeEmail(ctx context.Context, email string) error 
 		return fmt.Errorf("email must not be empty")
 	}
 
-	token, companyID, err := c.session(ctx)
-	if err != nil {
-		return err
-	}
-
 	form := url.Values{}
 	form.Set("email", email)
 
-	raw, err := c.requestWithContentType(ctx,
+	raw, err := c.authedRequest(ctx,
 		http.MethodPost, "/api/SendWorkerWelcomeEmail",
 		[]byte(form.Encode()),
-		"application/x-www-form-urlencoded;charset=UTF-8",
-		map[string]string{
-			"kauthtoken": token,
-			"kacompany":  strconv.FormatInt(companyID, 10),
-		})
+		"application/x-www-form-urlencoded;charset=UTF-8")
 	if err != nil {
 		return fmt.Errorf("kala: sending the welcome email: %w", err)
 	}

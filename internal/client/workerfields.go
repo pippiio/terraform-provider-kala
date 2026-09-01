@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -214,19 +213,11 @@ func isISODate(s string) bool {
 
 // postJSON sends an authenticated JSON POST to the internal API.
 func (c *internalAPI) postJSON(ctx context.Context, endpoint string, payload map[string]any) error {
-	token, companyID, err := c.session(ctx)
-	if err != nil {
-		return err
-	}
-
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("building request for %s: %w", endpoint, err)
 	}
 
-	_, err = c.request(ctx, http.MethodPost, endpoint, body, map[string]string{
-		"kauthtoken": token,
-		"kacompany":  strconv.FormatInt(companyID, 10),
-	})
+	_, err = c.authedRequest(ctx, http.MethodPost, endpoint, body, contentTypeHeader)
 	return err
 }
