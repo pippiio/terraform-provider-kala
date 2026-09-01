@@ -1319,17 +1319,21 @@ func TestUpdateEmployee_DateWriteFailureIsAttributeScoped(t *testing.T) {
 	}
 }
 
-func TestCreateEmployee_ExplicitFalseRoleIsNotWrittenOnAdopt(t *testing.T) {
+// An explicitly declared false IS a request to revoke, even on adopt. Skipping
+// it makes the applied result contradict the plan, which Terraform rejects with
+// "Provider produced inconsistent result after apply".
+func TestCreateEmployee_ExplicitFalseRoleIsWritten(t *testing.T) {
 	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "X", IsValidated: true})
+	fi.info = client.WorkerInfo{WorkerNr: 3, WorkerID: 3, IsLeader: true, IsValidated: true}
 	r := newEmployeeResource(fi)
 
 	m := employeeModelFor(3, "X", "e@example.com", true)
-	m.IsLeader = types.BoolValue(false) // explicitly false
+	m.IsLeader = types.BoolValue(false) // explicitly false: revoke it
 
 	resp := &resource.CreateResponse{State: emptyEmployeeState(t)}
 	r.Create(context.Background(), resource.CreateRequest{Plan: employeePlan(t, m)}, resp)
 
-	if len(fi.roleSets) != 0 {
-		t.Errorf("a false role on create must not strip an adopted employee's role: %+v", fi.roleSets)
+	if len(fi.roleSets) != 1 || fi.roleSets[0].value {
+		t.Errorf("an explicit false must be written as a revoke, got %+v", fi.roleSets)
 	}
 }

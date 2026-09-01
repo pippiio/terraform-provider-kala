@@ -275,7 +275,7 @@ func (r *employeeResource) Create(ctx context.Context, req resource.CreateReques
 	// email, so everything else needs its own write — and on an adopted
 	// employee this is what brings Kala in line with the configuration.
 	// The empty prior state means "write whatever was declared".
-	if !r.applyFieldChanges(ctx, internal, number, plan, employeeResourceModel{}, &resp.Diagnostics, true) {
+	if !r.applyFieldChanges(ctx, internal, number, plan, employeeResourceModel{}, &resp.Diagnostics) {
 		return
 	}
 
@@ -358,7 +358,7 @@ func (r *employeeResource) Update(ctx context.Context, req resource.UpdateReques
 		}
 	}
 
-	if !r.applyFieldChanges(ctx, internal, number, plan, state, &resp.Diagnostics, false) {
+	if !r.applyFieldChanges(ctx, internal, number, plan, state, &resp.Diagnostics) {
 		return
 	}
 
@@ -464,9 +464,16 @@ func (r *employeeResource) refresh(ctx context.Context, m *employeeResourceModel
 // Kala has no bulk update: each field is its own endpoint, each verified by
 // read-back. Only changed fields are written, so an apply that touches one
 // attribute does not rewrite the rest.
+//
+// The null/unknown check is what protects an ADOPTED employee: an attribute the
+// configuration does not mention arrives null, never as a zero value, so
+// omitting `department` cannot blank a department Kala already holds. An
+// explicit "" or false, by contrast, IS a request to clear or revoke — and must
+// be honoured, or Terraform rejects the apply for producing a result that
+// contradicts the plan.
 func (r *employeeResource) applyFieldChanges(
 	ctx context.Context, c client.InternalClient, number int64,
-	plan, state employeeResourceModel, diags *diag.Diagnostics, creating bool,
+	plan, state employeeResourceModel, diags *diag.Diagnostics,
 ) bool {
 	stringFields := []struct {
 		field     client.WorkerField
@@ -487,12 +494,7 @@ func (r *employeeResource) applyFieldChanges(
 		if f.planned.IsUnknown() || f.planned.IsNull() || f.planned.Equal(f.prior) {
 			continue
 		}
-		// On create there is no prior state to compare against, so an empty
-		// value is indistinguishable from "not declared". Writing it would
-		// BLANK the field on an adopted employee who already had one.
-		if creating && f.planned.ValueString() == "" {
-			continue
-		}
+
 		if err := c.SetWorkerField(ctx, number, f.field, f.planned.ValueString()); err != nil {
 			diags.AddAttributeError(path.Root(f.attribute),
 				"Could not update "+f.attribute, err.Error())
@@ -514,11 +516,7 @@ func (r *employeeResource) applyFieldChanges(
 		if rl.planned.IsUnknown() || rl.planned.IsNull() || rl.planned.Equal(rl.prior) {
 			continue
 		}
-		// On create, only an explicit true is a request to grant a role. A
-		// false would otherwise strip roles from an adopted employee.
-		if creating && !rl.planned.ValueBool() {
-			continue
-		}
+
 		if err := c.SetWorkerRole(ctx, number, rl.role, rl.planned.ValueBool()); err != nil {
 			diags.AddAttributeError(path.Root(rl.attribute),
 				"Could not update "+rl.attribute, err.Error())
@@ -528,9 +526,8 @@ func (r *employeeResource) applyFieldChanges(
 
 	dateDeclared := !plan.DateOfEmployment.IsUnknown() && !plan.DateOfEmployment.IsNull()
 	dateChanged := !plan.DateOfEmployment.Equal(state.DateOfEmployment)
-	dateBlankOnCreate := creating && plan.DateOfEmployment.ValueString() == ""
 
-	if dateDeclared && dateChanged && !dateBlankOnCreate {
+	if dateDeclared && dateChanged {
 		if err := c.SetWorkerDateOfEmployment(ctx, number, plan.DateOfEmployment.ValueString()); err != nil {
 			diags.AddAttributeError(path.Root("date_of_employment"),
 				"Could not update date_of_employment", err.Error())
