@@ -12,7 +12,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
@@ -40,12 +39,24 @@ type employeeResourceModel struct {
 	Email          types.String `tfsdk:"email"`
 	Active         types.Bool   `tfsdk:"active"`
 
-	// Computed, read from the internal API.
-	Title      types.String `tfsdk:"title"`
-	Phone      types.String `tfsdk:"phone"`
-	Department types.String `tfsdk:"department"`
-	Initials   types.String `tfsdk:"initials"`
-	Adopted    types.Bool   `tfsdk:"adopted"`
+	// Computed, read from the internal API's WorkerInfo endpoint.
+	Title              types.String `tfsdk:"title"`
+	Phone              types.String `tfsdk:"phone"`
+	PrivatePhone       types.String `tfsdk:"private_phone"`
+	Department         types.String `tfsdk:"department"`
+	Initials           types.String `tfsdk:"initials"`
+	LicensePlate       types.String `tfsdk:"license_plate"`
+	DateOfEmployment   types.String `tfsdk:"date_of_employment"`
+	FlexStartDate      types.String `tfsdk:"flex_start_date"`
+	NormHours          types.String `tfsdk:"norm_hours"`
+	LeaderNote         types.String `tfsdk:"leader_note"`
+	IsLeader           types.Bool   `tfsdk:"is_leader"`
+	IsPlanner          types.Bool   `tfsdk:"is_planner"`
+	IsSuperUser        types.Bool   `tfsdk:"is_super_user"`
+	IsFinance          types.Bool   `tfsdk:"is_finance"`
+	IsVisibleInPlanner types.Bool   `tfsdk:"is_visible_in_planner"`
+	WorkerID           types.Int64  `tfsdk:"worker_id"`
+	Adopted            types.Bool   `tfsdk:"adopted"`
 }
 
 func (r *employeeResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -79,9 +90,9 @@ func (r *employeeResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			},
 			"email": schema.StringAttribute{
 				Required: true,
-				MarkdownDescription: "Email address, used at creation. **Write-only:** no Kala read endpoint " +
-					"returns it, so Terraform cannot detect drift on this field.",
-				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				MarkdownDescription: "Email address. Sent when the employee is created and refreshed from " +
+					"`WorkerInfo` on every read, so drift is detected. Kala exposes no endpoint to change " +
+					"an existing employee's email, so a change here warns rather than taking effect.",
 			},
 			"active": schema.BoolAttribute{
 				Optional: true,
@@ -92,10 +103,32 @@ func (r *employeeResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 					"allows Terraform to both read and write, so it is the only one with real drift detection.",
 			},
 
-			"title":      schema.StringAttribute{Computed: true, MarkdownDescription: "Job title, as recorded in Kala."},
-			"phone":      schema.StringAttribute{Computed: true, MarkdownDescription: "Phone number, as recorded in Kala."},
-			"department": schema.StringAttribute{Computed: true, MarkdownDescription: "Department, as recorded in Kala."},
-			"initials":   schema.StringAttribute{Computed: true, MarkdownDescription: "Initials, as recorded in Kala."},
+			"title":         schema.StringAttribute{Computed: true, MarkdownDescription: "Job title."},
+			"phone":         schema.StringAttribute{Computed: true, MarkdownDescription: "Work phone number."},
+			"private_phone": schema.StringAttribute{Computed: true, MarkdownDescription: "Private phone number."},
+			"department":    schema.StringAttribute{Computed: true, MarkdownDescription: "Department."},
+			"initials":      schema.StringAttribute{Computed: true, MarkdownDescription: "Initials. Kala's other integrations derive email addresses from these."},
+			"license_plate": schema.StringAttribute{Computed: true, MarkdownDescription: "Vehicle registration recorded against the employee."},
+			"date_of_employment": schema.StringAttribute{
+				Computed: true,
+				MarkdownDescription: "Employment start date. Kala returns this as a free-form string rather " +
+					"than a typed date, so it is passed through verbatim.",
+			},
+			"flex_start_date": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Flex-time start date. A free-form string upstream, like `date_of_employment`.",
+			},
+			"norm_hours": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Contracted normal hours. A string upstream, not a number.",
+			},
+			"leader_note":           schema.StringAttribute{Computed: true, MarkdownDescription: "Free-text note visible to leaders."},
+			"is_leader":             schema.BoolAttribute{Computed: true, MarkdownDescription: "Whether the employee is a leader."},
+			"is_planner":            schema.BoolAttribute{Computed: true, MarkdownDescription: "Whether the employee has planner rights."},
+			"is_super_user":         schema.BoolAttribute{Computed: true, MarkdownDescription: "Whether the employee is a super user."},
+			"is_finance":            schema.BoolAttribute{Computed: true, MarkdownDescription: "Whether the employee has finance rights."},
+			"is_visible_in_planner": schema.BoolAttribute{Computed: true, MarkdownDescription: "Whether the employee appears in the planner."},
+			"worker_id":             schema.Int64Attribute{Computed: true, MarkdownDescription: "Kala's internal worker ID. Observed to equal `employee_number`, but exposed separately in case they ever diverge."},
 			"adopted": schema.BoolAttribute{
 				Computed: true,
 				MarkdownDescription: "True when this resource took over an employee that already existed in Kala " +
@@ -240,9 +273,7 @@ func (r *employeeResource) Read(ctx context.Context, req resource.ReadRequest, r
 	}
 
 	applyWorker(&state, worker)
-
-	// email is never refreshed: no Kala endpoint returns it, so anything we
-	// wrote here would be invented and would produce a perpetual diff.
+	r.enrich(ctx, &state, internal, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -287,8 +318,11 @@ func (r *employeeResource) Update(ctx context.Context, req resource.UpdateReques
 		resp.Diagnostics.AddWarning(
 			"Employee email cannot be changed through Kala's API",
 			fmt.Sprintf(
-				"Employee %d's email is only sent when the employee is first created, and no Kala "+
-					"read endpoint returns it. The new value is recorded in state only.", number),
+				"The configuration changes employee %d's email from %q to %q, but Kala exposes no "+
+					"endpoint to update it — it is only accepted when the employee is created.\n\n"+
+					"The next read will refresh this attribute from Kala and the diff will reappear. "+
+					"Change the address in the Kala interface, or revert the configuration to match.",
+				number, state.Email.ValueString(), plan.Email.ValueString()),
 		)
 	}
 
@@ -377,27 +411,79 @@ func (r *employeeResource) ImportState(ctx context.Context, req resource.ImportS
 // --- helpers -------------------------------------------------------------
 
 // refresh reads the worker back and fills the computed attributes.
-func (r *employeeResource) refresh(ctx context.Context, m *employeeResourceModel, c client.InternalClient, diags interface{ AddError(string, string) }) bool {
+func (r *employeeResource) refresh(ctx context.Context, m *employeeResourceModel, c client.InternalClient, diags diagnosticSink) bool {
 	worker, err := c.GetWorker(ctx, m.EmployeeNumber.ValueInt64())
 	if err != nil {
 		diags.AddError("Could not read the Kala employee back", err.Error())
 		return false
 	}
 	applyWorker(m, worker)
+	r.enrich(ctx, m, c, diags)
 	return true
 }
 
-// applyWorker copies readable fields from Kala onto the model.
+// enrich fills the WorkerInfo-sourced attributes.
 //
-// name is refreshed because Kala does return it — but since it cannot be
-// written, a mismatch surfaces as a diff the user resolves by editing their
-// configuration, not by applying.
+// Best-effort per ARCH1.5: WorkerInfo is a read-enrichment path, so a failure
+// degrades rather than failing the operation. Prior values are LEFT IN PLACE
+// rather than nulled — nulling them would manufacture a diff on every plan the
+// user could not resolve.
+func (r *employeeResource) enrich(ctx context.Context, m *employeeResourceModel, c client.InternalClient, diags diagnosticSink) {
+	info, err := c.GetWorkerInfo(ctx, m.EmployeeNumber.ValueInt64())
+	if err != nil {
+		if w, ok := diags.(interface{ AddWarning(string, string) }); ok {
+			w.AddWarning(
+				"Could not read detailed employee information",
+				fmt.Sprintf("Employee %d's detail attributes could not be refreshed from Kala and are "+
+					"carried forward from the previous state.\n\nError: %s",
+					m.EmployeeNumber.ValueInt64(), err.Error()),
+			)
+		}
+		tflog.Debug(ctx, "WorkerInfo enrichment failed; keeping prior values", map[string]any{
+			"employee_number": m.EmployeeNumber.ValueInt64(),
+		})
+		return
+	}
+	applyWorkerInfo(m, info)
+}
+
+// applyWorkerInfo copies the detailed record onto the model.
+func applyWorkerInfo(m *employeeResourceModel, i client.WorkerInfo) {
+	// email is readable after all — via WorkerInfo, not the endpoints that
+	// return the settings list. Refreshing it gives real drift detection.
+	m.Email = types.StringValue(i.Email)
+
+	m.Title = types.StringValue(i.Title)
+	m.Phone = types.StringValue(i.Phone)
+	m.PrivatePhone = types.StringValue(i.PrivatePhone)
+	m.Department = types.StringValue(i.Department)
+	m.Initials = types.StringValue(i.Initials)
+	m.LicensePlate = types.StringValue(i.LicensePlate)
+	m.DateOfEmployment = types.StringValue(i.DateOfEmployment)
+	m.FlexStartDate = types.StringValue(i.FlexStartDate)
+	m.NormHours = types.StringValue(i.NormHours)
+	m.LeaderNote = types.StringValue(i.LeaderNote)
+	m.IsLeader = types.BoolValue(i.IsLeader)
+	m.IsPlanner = types.BoolValue(i.IsPlanner)
+	m.IsSuperUser = types.BoolValue(i.IsSuperUser)
+	m.IsFinance = types.BoolValue(i.IsFinance)
+	m.IsVisibleInPlanner = types.BoolValue(i.IsVisibleInPlanner)
+	m.WorkerID = types.Int64Value(i.WorkerID)
+}
+
+// diagnosticSink is the subset of diag.Diagnostics these helpers need.
+type diagnosticSink interface{ AddError(string, string) }
+
+// applyWorker copies the fields the WORKER LIST reliably provides.
+//
+// Deliberately only activation state. /api/Workers returns title, phone,
+// department, and initials as empty strings even when WorkerInfo has values for
+// them (observed 2026-09-01), so copying them here would overwrite good
+// enrichment data with blanks — and would null those attributes entirely
+// whenever enrichment failed. Everything beyond activation comes from
+// applyWorkerInfo.
 func applyWorker(m *employeeResourceModel, w client.Worker) {
 	m.Active = types.BoolValue(w.IsValidated)
-	m.Title = types.StringValue(w.Title)
-	m.Phone = types.StringValue(w.Phone)
-	m.Department = types.StringValue(w.Department)
-	m.Initials = types.StringValue(w.Initials)
 	if m.Adopted.IsNull() || m.Adopted.IsUnknown() {
 		m.Adopted = types.BoolValue(false)
 	}

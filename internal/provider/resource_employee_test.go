@@ -26,6 +26,12 @@ type fakeInternal struct {
 	setValidErr   error
 	getWorkerErr  error
 	listWorkerErr error
+
+	// WorkerInfo enrichment
+	info      client.WorkerInfo
+	infoErr   error
+	infoCalls int
+	infoByNr  map[int64]client.WorkerInfo
 }
 
 type setValidatedCall struct {
@@ -75,6 +81,29 @@ func (f *fakeInternal) SetWorkerValidated(_ context.Context, nr int64, v bool) e
 	return nil
 }
 
+func (f *fakeInternal) GetWorkerInfo(_ context.Context, nr int64) (client.WorkerInfo, error) {
+	f.infoCalls++
+	if f.infoErr != nil {
+		return client.WorkerInfo{}, f.infoErr
+	}
+	if i, ok := f.infoByNr[nr]; ok {
+		return i, nil
+	}
+	if f.info.WorkerNr != 0 {
+		return f.info, nil
+	}
+	// Default: derive a minimal record from the worker so enrichment succeeds.
+	w, ok := f.workers[nr]
+	if !ok {
+		return client.WorkerInfo{}, client.ErrNotFound
+	}
+	return client.WorkerInfo{
+		WorkerNr: w.WorkerNr, WorkerID: w.WorkerNr, Name: w.Name,
+		Title: w.Title, Phone: w.Phone, Department: w.Department,
+		Initials: w.Initials, IsValidated: w.IsValidated,
+	}, nil
+}
+
 func (f *fakeInternal) CreateWorker(_ context.Context, in client.NewWorker) (client.Worker, error) {
 	f.createCalled, f.created = true, in
 	if f.createErr != nil {
@@ -113,15 +142,27 @@ func employeeValue(t *testing.T, m employeeResourceModel) tftypes.Value {
 		return v.ValueString()
 	}
 	return tftypes.NewValue(typ.(tftypes.Object), map[string]tftypes.Value{
-		"employee_number": tftypes.NewValue(tftypes.Number, m.EmployeeNumber.ValueInt64()),
-		"name":            tftypes.NewValue(tftypes.String, m.Name.ValueString()),
-		"email":           tftypes.NewValue(tftypes.String, m.Email.ValueString()),
-		"active":          tftypes.NewValue(tftypes.Bool, m.Active.ValueBool()),
-		"title":           tftypes.NewValue(tftypes.String, str(m.Title)),
-		"phone":           tftypes.NewValue(tftypes.String, str(m.Phone)),
-		"department":      tftypes.NewValue(tftypes.String, str(m.Department)),
-		"initials":        tftypes.NewValue(tftypes.String, str(m.Initials)),
-		"adopted":         tftypes.NewValue(tftypes.Bool, m.Adopted.ValueBool()),
+		"employee_number":       tftypes.NewValue(tftypes.Number, m.EmployeeNumber.ValueInt64()),
+		"name":                  tftypes.NewValue(tftypes.String, m.Name.ValueString()),
+		"email":                 tftypes.NewValue(tftypes.String, m.Email.ValueString()),
+		"active":                tftypes.NewValue(tftypes.Bool, m.Active.ValueBool()),
+		"title":                 tftypes.NewValue(tftypes.String, str(m.Title)),
+		"phone":                 tftypes.NewValue(tftypes.String, str(m.Phone)),
+		"private_phone":         tftypes.NewValue(tftypes.String, str(m.PrivatePhone)),
+		"department":            tftypes.NewValue(tftypes.String, str(m.Department)),
+		"initials":              tftypes.NewValue(tftypes.String, str(m.Initials)),
+		"license_plate":         tftypes.NewValue(tftypes.String, str(m.LicensePlate)),
+		"date_of_employment":    tftypes.NewValue(tftypes.String, str(m.DateOfEmployment)),
+		"flex_start_date":       tftypes.NewValue(tftypes.String, str(m.FlexStartDate)),
+		"norm_hours":            tftypes.NewValue(tftypes.String, str(m.NormHours)),
+		"leader_note":           tftypes.NewValue(tftypes.String, str(m.LeaderNote)),
+		"is_leader":             tftypes.NewValue(tftypes.Bool, m.IsLeader.ValueBool()),
+		"is_planner":            tftypes.NewValue(tftypes.Bool, m.IsPlanner.ValueBool()),
+		"is_super_user":         tftypes.NewValue(tftypes.Bool, m.IsSuperUser.ValueBool()),
+		"is_finance":            tftypes.NewValue(tftypes.Bool, m.IsFinance.ValueBool()),
+		"is_visible_in_planner": tftypes.NewValue(tftypes.Bool, m.IsVisibleInPlanner.ValueBool()),
+		"worker_id":             tftypes.NewValue(tftypes.Number, m.WorkerID.ValueInt64()),
+		"adopted":               tftypes.NewValue(tftypes.Bool, m.Adopted.ValueBool()),
 	})
 }
 
@@ -142,15 +183,27 @@ func emptyEmployeeState(t *testing.T) tfsdk.State {
 
 func employeeModelFor(number int64, name, email string, active bool) employeeResourceModel {
 	return employeeResourceModel{
-		EmployeeNumber: types.Int64Value(number),
-		Name:           types.StringValue(name),
-		Email:          types.StringValue(email),
-		Active:         types.BoolValue(active),
-		Title:          types.StringValue(""),
-		Phone:          types.StringValue(""),
-		Department:     types.StringValue(""),
-		Initials:       types.StringValue(""),
-		Adopted:        types.BoolValue(false),
+		EmployeeNumber:     types.Int64Value(number),
+		Name:               types.StringValue(name),
+		Email:              types.StringValue(email),
+		Active:             types.BoolValue(active),
+		Title:              types.StringValue(""),
+		Phone:              types.StringValue(""),
+		PrivatePhone:       types.StringValue(""),
+		Department:         types.StringValue(""),
+		Initials:           types.StringValue(""),
+		LicensePlate:       types.StringValue(""),
+		DateOfEmployment:   types.StringValue(""),
+		FlexStartDate:      types.StringValue(""),
+		NormHours:          types.StringValue(""),
+		LeaderNote:         types.StringValue(""),
+		IsLeader:           types.BoolValue(false),
+		IsPlanner:          types.BoolValue(false),
+		IsSuperUser:        types.BoolValue(false),
+		IsFinance:          types.BoolValue(false),
+		IsVisibleInPlanner: types.BoolValue(false),
+		WorkerID:           types.Int64Value(0),
+		Adopted:            types.BoolValue(false),
 	}
 }
 
@@ -176,9 +229,14 @@ func TestEmployeeResource_SchemaDocumentsIrreversibleDestroy(t *testing.T) {
 		t.Error("the schema must document that an existing employee_number is adopted")
 	}
 
-	email := s.Attributes["email"]
-	if !strings.Contains(strings.ToLower(email.GetMarkdownDescription()), "write-only") {
-		t.Error("email must be documented as write-only")
+	// Corrected 2026-09-01: email IS readable, via WorkerInfo. The schema must
+	// no longer claim otherwise, but must still say it cannot be changed.
+	email := strings.ToLower(s.Attributes["email"].GetMarkdownDescription())
+	if strings.Contains(email, "write-only") {
+		t.Error("email is readable via WorkerInfo; the write-only claim is wrong")
+	}
+	if !strings.Contains(email, "no endpoint to change") {
+		t.Error("email must document that it cannot be updated after creation")
 	}
 }
 
@@ -356,6 +414,11 @@ func TestReadEmployee_RefreshesActivationAndComputedFields(t *testing.T) {
 		WorkerNr: 3, Name: "X", Title: "Montør", Phone: "+45",
 		Department: "Ops", Initials: "XX", IsValidated: false,
 	})
+	fi.info = client.WorkerInfo{
+		WorkerNr: 3, WorkerID: 3, Name: "X", Email: "upstream@example.com",
+		Title: "Montør", Phone: "+45", Department: "Ops", Initials: "XX",
+		NormHours: "37", DateOfEmployment: "2020-01-01", IsLeader: true,
+	}
 	r := newEmployeeResource(fi)
 
 	prior := employeeModelFor(3, "X", "e@example.com", true)
@@ -375,9 +438,56 @@ func TestReadEmployee_RefreshesActivationAndComputedFields(t *testing.T) {
 	if got.Department.ValueString() != "Ops" || got.Initials.ValueString() != "XX" {
 		t.Errorf("computed fields not refreshed: %+v", got)
 	}
-	// email is write-only; it must survive from prior state, not be nulled.
-	if got.Email.ValueString() != "e@example.com" {
-		t.Errorf("email = %q, want it preserved — refreshing it would cause a perpetual diff", got.Email.ValueString())
+	// Corrected 2026-09-01: email IS readable via WorkerInfo, so Read must
+	// refresh it from upstream rather than carrying the configured value
+	// forward. That is what gives the field real drift detection.
+	if got.Email.ValueString() != "upstream@example.com" {
+		t.Errorf("email = %q, want it refreshed from WorkerInfo", got.Email.ValueString())
+	}
+
+	// The rest of the WorkerInfo enrichment must land too.
+	if got.NormHours.ValueString() != "37" {
+		t.Errorf("norm_hours = %q, want 37", got.NormHours.ValueString())
+	}
+	if got.DateOfEmployment.ValueString() != "2020-01-01" {
+		t.Errorf("date_of_employment = %q, want 2020-01-01", got.DateOfEmployment.ValueString())
+	}
+	if !got.IsLeader.ValueBool() {
+		t.Error("is_leader should be refreshed from WorkerInfo")
+	}
+	if got.WorkerID.ValueInt64() != 3 {
+		t.Errorf("worker_id = %d, want 3", got.WorkerID.ValueInt64())
+	}
+}
+
+// ARCH1.5: WorkerInfo is a read-enrichment path, so a failure must degrade
+// rather than fail — and must NOT null the prior values, which would
+// manufacture an unresolvable diff on every plan.
+func TestReadEmployee_EnrichmentFailureKeepsPriorValues(t *testing.T) {
+	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "X", IsValidated: true})
+	fi.infoErr = errors.New("WorkerInfo unavailable")
+	r := newEmployeeResource(fi)
+
+	prior := employeeModelFor(3, "X", "kept@example.com", true)
+	prior.Department = types.StringValue("Ops")
+
+	resp := &resource.ReadResponse{State: employeeState(t, prior)}
+	r.Read(context.Background(), resource.ReadRequest{State: employeeState(t, prior)}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("enrichment failure must not fail the read: %s", diagsText(resp.Diagnostics))
+	}
+	if resp.Diagnostics.WarningsCount() == 0 {
+		t.Error("a degraded read should warn")
+	}
+
+	var got employeeResourceModel
+	resp.State.Get(context.Background(), &got)
+	if got.Email.ValueString() != "kept@example.com" {
+		t.Errorf("email = %q, want the prior value kept", got.Email.ValueString())
+	}
+	if got.Department.ValueString() != "Ops" {
+		t.Errorf("department = %q, want the prior value kept", got.Department.ValueString())
 	}
 }
 
@@ -708,8 +818,14 @@ func TestUpdateEmployee_EmailChangeWarns(t *testing.T) {
 	if resp.Diagnostics.WarningsCount() == 0 {
 		t.Fatal("an email change must warn — it is only sent at creation")
 	}
-	if !strings.Contains(diagsText(resp.Diagnostics), "state only") {
-		t.Errorf("warning should say the value is state-only, got: %s", diagsText(resp.Diagnostics))
+	text := diagsText(resp.Diagnostics)
+	if !strings.Contains(text, "no endpoint to update it") {
+		t.Errorf("warning should explain why the change cannot take effect, got: %s", text)
+	}
+	// Since email is now refreshed from upstream, the diff will come back —
+	// the user needs to know that rather than assuming it settled.
+	if !strings.Contains(text, "diff will reappear") {
+		t.Errorf("warning should say the diff returns on the next read, got: %s", text)
 	}
 }
 
@@ -746,15 +862,60 @@ func (f *failAfterCreate) GetWorker(ctx context.Context, nr int64) (client.Worke
 	return f.fakeInternal.GetWorker(ctx, nr)
 }
 
-func TestApplyWorker_DefaultsAdoptedWhenUnset(t *testing.T) {
-	m := employeeResourceModel{}
-	applyWorker(&m, client.Worker{WorkerNr: 1, IsValidated: true, Title: "T"})
+func TestApplyWorker_OnlyTouchesActivationAndAdopted(t *testing.T) {
+	m := employeeResourceModel{Department: types.StringValue("Ops")}
+	applyWorker(&m, client.Worker{WorkerNr: 1, IsValidated: true, Title: "T", Department: ""})
 
 	if m.Adopted.IsNull() || m.Adopted.ValueBool() {
 		t.Errorf("adopted should default to false, got %v", m.Adopted)
 	}
-	if !m.Active.ValueBool() || m.Title.ValueString() != "T" {
-		t.Errorf("fields not applied: %+v", m)
+	if !m.Active.ValueBool() {
+		t.Error("active should be applied from the list record")
+	}
+	// The list returns blanks for these even when WorkerInfo has values, so
+	// applyWorker must leave them alone.
+	if m.Department.ValueString() != "Ops" {
+		t.Errorf("department = %q, want the enriched value untouched", m.Department.ValueString())
+	}
+	if !m.Title.IsNull() {
+		t.Errorf("title should not be set from the list record, got %v", m.Title)
+	}
+}
+
+func TestApplyWorkerInfo_PopulatesEverything(t *testing.T) {
+	m := employeeResourceModel{}
+	applyWorkerInfo(&m, client.WorkerInfo{
+		WorkerNr: 3, WorkerID: 3, Email: "a@b.c", Title: "T", Phone: "p",
+		PrivatePhone: "pp", Department: "D", Initials: "AB", LicensePlate: "XY12345",
+		DateOfEmployment: "2020-01-01", FlexStartDate: "2021-01-01", NormHours: "37",
+		LeaderNote: "note", IsLeader: true, IsPlanner: true, IsSuperUser: true,
+		IsFinance: true, IsVisibleInPlanner: true,
+	})
+
+	checks := map[string]string{
+		"email": m.Email.ValueString(), "title": m.Title.ValueString(),
+		"private_phone": m.PrivatePhone.ValueString(), "department": m.Department.ValueString(),
+		"initials": m.Initials.ValueString(), "license_plate": m.LicensePlate.ValueString(),
+		"date_of_employment": m.DateOfEmployment.ValueString(),
+		"flex_start_date":    m.FlexStartDate.ValueString(),
+		"norm_hours":         m.NormHours.ValueString(), "leader_note": m.LeaderNote.ValueString(),
+	}
+	for name, v := range checks {
+		if v == "" {
+			t.Errorf("%s was not populated", name)
+		}
+	}
+	for name, v := range map[string]bool{
+		"is_leader": m.IsLeader.ValueBool(), "is_planner": m.IsPlanner.ValueBool(),
+		"is_super_user": m.IsSuperUser.ValueBool(), "is_finance": m.IsFinance.ValueBool(),
+		"is_visible_in_planner": m.IsVisibleInPlanner.ValueBool(),
+	} {
+		if !v {
+			t.Errorf("%s was not populated", name)
+		}
+	}
+	if m.WorkerID.ValueInt64() != 3 {
+		t.Errorf("worker_id = %d, want 3", m.WorkerID.ValueInt64())
 	}
 }
 

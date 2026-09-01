@@ -329,3 +329,120 @@ func TestInternal_CreateWorkerUnverifiedMentionsIdentifierMismatch(t *testing.T)
 		t.Errorf("error should flag the possible identifier mismatch, got %q", err.Error())
 	}
 }
+
+// --- WorkerInfo -----------------------------------------------------------
+
+func workerInfoMock(t *testing.T, handler http.HandlerFunc) InternalClient {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/Auth/SignIn/"):
+			_, _ = w.Write([]byte(`{"secureLoginToken":"t","companies":[{"id":17221}]}`))
+		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
+			_, _ = w.Write([]byte(`{"token":"session-token"}`))
+		default:
+			handler(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return NewInternal(InternalConfig{
+		Endpoint: srv.URL, Username: "u", Password: "p",
+		retryBaseDur: time.Microsecond,
+	})
+}
+
+func TestInternal_GetWorkerInfoDecodesFullRecord(t *testing.T) {
+	c := workerInfoMock(t, func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("workerNr"); got != "3" {
+			t.Errorf("workerNr = %q, want 3", got)
+		}
+		if r.Header.Get("kacompany") == "" {
+			t.Error("WorkerInfo requires the kacompany header")
+		}
+		// Shapes as observed on the live API: normHours and the dates are
+		// STRINGS, and several fields come back null.
+		_, _ = w.Write([]byte(`{
+			"workerNr":3,"workerId":3,"name":"N","email":"a@b.c","initials":"AB",
+			"title":"T","department":"D","phone":"p","privatePhone":null,
+			"licensePlate":"XY12345","dateOfEmployment":"2020-01-01",
+			"flexStartDate":"2021-01-01","normHours":"37","leaderNote":"note",
+			"isValidated":true,"isLeader":true,"isPlanner":false,"isSuperUser":true,
+			"isFinance":false,"isVisibleInPlanner":true,"allowWeekView":true,
+			"workerImage":null,"extraRolesDict":null,"isTool":0
+		}`))
+	})
+
+	got, err := c.GetWorkerInfo(context.Background(), 3)
+	if err != nil {
+		t.Fatalf("GetWorkerInfo: %v", err)
+	}
+
+	if got.Email != "a@b.c" {
+		t.Errorf("Email = %q — this is the field the write-only claim got wrong", got.Email)
+	}
+	if got.NormHours != "37" || got.DateOfEmployment != "2020-01-01" {
+		t.Errorf("string-typed fields wrong: %+v", got)
+	}
+	if got.PrivatePhone != "" {
+		t.Errorf("null privatePhone should decode to empty, got %q", got.PrivatePhone)
+	}
+	if !got.IsLeader || !got.IsSuperUser || got.IsPlanner {
+		t.Errorf("booleans wrong: %+v", got)
+	}
+	// isTool is an int upstream, not a bool — it must not break decoding.
+	if got.WorkerID != 3 {
+		t.Errorf("WorkerID = %d, want 3", got.WorkerID)
+	}
+}
+
+// A missing worker produces HTTP 500 with an HTML body, not 404. That is
+// classified as retryable, which is precisely why GetWorkerInfo must not be
+// used as an existence check.
+func TestInternal_GetWorkerInfoMissingWorkerIs500(t *testing.T) {
+	c := workerInfoMock(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`<!DOCTYPE html><html><head><title>Sequence contains no elements</title>`))
+	})
+
+	_, err := c.GetWorkerInfo(context.Background(), 99999)
+	if !errors.Is(err, ErrServer) {
+		t.Errorf("want ErrServer (not ErrNotFound) — establish existence with GetWorker first: %v", err)
+	}
+}
+
+func TestInternal_GetWorkerInfoEmptyBodyIsNotFound(t *testing.T) {
+	c := workerInfoMock(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	if _, err := c.GetWorkerInfo(context.Background(), 3); !errors.Is(err, ErrNotFound) {
+		t.Errorf("want ErrNotFound, got %v", err)
+	}
+}
+
+func TestInternal_GetWorkerInfoMalformedBody(t *testing.T) {
+	c := workerInfoMock(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{broken`))
+	})
+
+	if _, err := c.GetWorkerInfo(context.Background(), 3); !errors.Is(err, ErrDecode) {
+		t.Errorf("want ErrDecode, got %v", err)
+	}
+}
+
+func TestInternal_GetWorkerInfoRequiresIdentity(t *testing.T) {
+	c := workerInfoMock(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"name":"no identity"}`))
+	})
+
+	if _, err := c.GetWorkerInfo(context.Background(), 3); !errors.Is(err, ErrDecode) {
+		t.Errorf("a record without workerNr must fail: %v", err)
+	}
+}
+
+func TestInternal_GetWorkerInfoNeedsCredentials(t *testing.T) {
+	c := NewInternal(InternalConfig{Endpoint: "https://example.test"})
+	if _, err := c.GetWorkerInfo(context.Background(), 1); err == nil {
+		t.Error("want a credentials error")
+	}
+}

@@ -89,11 +89,53 @@ type InternalClient interface {
 	// result by reading it back (ARCH1.8). An unconfirmed write is an error.
 	SetWorkerValidated(ctx context.Context, workerNr int64, validated bool) error
 
+	// GetWorkerInfo returns the detailed record for a worker.
+	//
+	// Enrichment only — never an existence check. /api/WorkerInfo answers a
+	// missing workerNr with HTTP 500 (a .NET "Sequence contains no elements"
+	// page), which the retry policy treats as transient. Establish existence
+	// with GetWorker first.
+	GetWorkerInfo(ctx context.Context, workerNr int64) (WorkerInfo, error)
+
 	// CreateWorker registers a new employee via /Api/SignUp/.
 	//
 	// This is the ONLY way to create an employee in Kala — webapiv2 has no
 	// equivalent. It is verified by read-back like every internal-API write.
 	CreateWorker(ctx context.Context, in NewWorker) (Worker, error)
+}
+
+// WorkerInfo is the detailed worker record from /api/WorkerInfo.
+//
+// Several fields Kala models as loose strings rather than typed values —
+// DateOfEmployment, FlexStartDate, and NormHours all arrive as strings, so they
+// are passed through verbatim rather than parsed into times or numbers we would
+// have to guess the format of.
+type WorkerInfo struct {
+	WorkerNr   int64
+	WorkerID   int64
+	Name       string
+	Email      string
+	Initials   string
+	Title      string
+	Department string
+
+	Phone        string
+	PrivatePhone string
+	LicensePlate string
+
+	DateOfEmployment string
+	FlexStartDate    string
+	NormHours        string
+
+	IsValidated        bool
+	IsLeader           bool
+	IsPlanner          bool
+	IsSuperUser        bool
+	IsFinance          bool
+	IsVisibleInPlanner bool
+	AllowWeekView      bool
+
+	LeaderNote string
 }
 
 // NewWorker is the input for creating an employee.
@@ -161,6 +203,51 @@ func (w wireWorker) toDomain() (Worker, error) {
 		Department:  w.Department,
 		Initials:    w.Initials,
 		IsValidated: w.IsValidated,
+	}, nil
+}
+
+type wireWorkerInfo struct {
+	WorkerNr   *int64 `json:"workerNr"`
+	WorkerID   int64  `json:"workerId"`
+	Name       string `json:"name"`
+	Email      string `json:"email"`
+	Initials   string `json:"initials"`
+	Title      string `json:"title"`
+	Department string `json:"department"`
+
+	Phone        string `json:"phone"`
+	PrivatePhone string `json:"privatePhone"`
+	LicensePlate string `json:"licensePlate"`
+
+	// Strings upstream, not dates or numbers. Observed 2026-09-01.
+	DateOfEmployment string `json:"dateOfEmployment"`
+	FlexStartDate    string `json:"flexStartDate"`
+	NormHours        string `json:"normHours"`
+
+	IsValidated        bool `json:"isValidated"`
+	IsLeader           bool `json:"isLeader"`
+	IsPlanner          bool `json:"isPlanner"`
+	IsSuperUser        bool `json:"isSuperUser"`
+	IsFinance          bool `json:"isFinance"`
+	IsVisibleInPlanner bool `json:"isVisibleInPlanner"`
+	AllowWeekView      bool `json:"allowWeekView"`
+
+	LeaderNote string `json:"leaderNote"`
+}
+
+func (w wireWorkerInfo) toDomain() (WorkerInfo, error) {
+	if w.WorkerNr == nil || *w.WorkerNr == 0 {
+		return WorkerInfo{}, fmt.Errorf("%w: worker info has no 'workerNr' identity", ErrDecode)
+	}
+	return WorkerInfo{
+		WorkerNr: *w.WorkerNr, WorkerID: w.WorkerID, Name: w.Name, Email: w.Email,
+		Initials: w.Initials, Title: w.Title, Department: w.Department,
+		Phone: w.Phone, PrivatePhone: w.PrivatePhone, LicensePlate: w.LicensePlate,
+		DateOfEmployment: w.DateOfEmployment, FlexStartDate: w.FlexStartDate, NormHours: w.NormHours,
+		IsValidated: w.IsValidated, IsLeader: w.IsLeader, IsPlanner: w.IsPlanner,
+		IsSuperUser: w.IsSuperUser, IsFinance: w.IsFinance,
+		IsVisibleInPlanner: w.IsVisibleInPlanner, AllowWeekView: w.AllowWeekView,
+		LeaderNote: w.LeaderNote,
 	}, nil
 }
 
@@ -483,4 +570,35 @@ func (c *internalAPI) CreateWorker(ctx context.Context, in NewWorker) (Worker, e
 	}
 
 	return worker, nil
+}
+
+// GetWorkerInfo returns the detailed worker record.
+//
+// Enrichment only. A missing workerNr produces HTTP 500 rather than 404, which
+// the retry policy treats as transient — so callers must establish existence
+// with GetWorker before calling this, or they will pay three pointless retries
+// and receive ErrServer instead of ErrNotFound.
+func (c *internalAPI) GetWorkerInfo(ctx context.Context, workerNr int64) (WorkerInfo, error) {
+	token, companyID, err := c.session(ctx)
+	if err != nil {
+		return WorkerInfo{}, err
+	}
+
+	raw, err := c.request(ctx, http.MethodGet,
+		"/api/WorkerInfo/?workerNr="+strconv.FormatInt(workerNr, 10), nil, map[string]string{
+			"kauthtoken": token,
+			"kacompany":  strconv.FormatInt(companyID, 10),
+		})
+	if err != nil {
+		return WorkerInfo{}, fmt.Errorf("kala: reading worker info for %d: %w", workerNr, err)
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return WorkerInfo{}, fmt.Errorf("%w: empty worker info for %d", ErrNotFound, workerNr)
+	}
+
+	var w wireWorkerInfo
+	if err := json.Unmarshal(raw, &w); err != nil {
+		return WorkerInfo{}, fmt.Errorf("%w: worker info response: %v", ErrDecode, err)
+	}
+	return w.toDomain()
 }
