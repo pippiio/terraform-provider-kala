@@ -28,7 +28,7 @@ func newFieldMock(t *testing.T) *fieldMock {
 	m.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/Auth/SignIn/"):
-			_, _ = w.Write([]byte(`{"secureLoginToken":"t","companies":[{"id":17221}]}`))
+			_, _ = w.Write([]byte(`{"secureLoginToken":"t","companies":[{"id":4242}]}`))
 			return
 		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
 			_, _ = w.Write([]byte(`{"token":"session-token"}`))
@@ -346,7 +346,7 @@ func TestSendWelcomeEmail_UsesFormEncodingNotJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/Auth/SignIn/"):
-			_, _ = w.Write([]byte(`{"secureLoginToken":"t","companies":[{"id":17221}]}`))
+			_, _ = w.Write([]byte(`{"secureLoginToken":"t","companies":[{"id":4242}]}`))
 		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
 			_, _ = w.Write([]byte(`{"token":"session-token"}`))
 		default:
@@ -365,7 +365,7 @@ func TestSendWelcomeEmail_UsesFormEncodingNotJSON(t *testing.T) {
 	c := NewInternal(InternalConfig{
 		Endpoint: srv.URL, Username: "u", Password: "p", retryBaseDur: time.Microsecond,
 	})
-	if err := c.SendWelcomeEmail(context.Background(), "test@archan.dk"); err != nil {
+	if err := c.SendWelcomeEmail(context.Background(), "frodo@example.com"); err != nil {
 		t.Fatalf("SendWelcomeEmail: %v", err)
 	}
 
@@ -373,7 +373,7 @@ func TestSendWelcomeEmail_UsesFormEncodingNotJSON(t *testing.T) {
 	if !strings.HasPrefix(gotContentType, "application/x-www-form-urlencoded") {
 		t.Errorf("Content-Type = %q, want form encoding", gotContentType)
 	}
-	if gotBody != "email=test%40archan.dk" {
+	if gotBody != "email=frodo%40example.com" {
 		t.Errorf("body = %q, want the URL-encoded email", gotBody)
 	}
 }

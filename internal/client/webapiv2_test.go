@@ -234,7 +234,7 @@ func TestGetEmployee_SuccessAndNotFound(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"number":4711,"name":"Anders","settings":[{"key":"k","value":"v"}]}`))
+		_, _ = w.Write([]byte(`{"number":4711,"name":"Frodo","settings":[{"key":"k","value":"v"}]}`))
 	}))
 	defer srv.Close()
 
@@ -244,8 +244,8 @@ func TestGetEmployee_SuccessAndNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetEmployee: %v", err)
 	}
-	if got.Number != 4711 || got.Name != "Anders" {
-		t.Errorf("got %+v, want number 4711 name Anders", got)
+	if got.Number != 4711 || got.Name != "Frodo" {
+		t.Errorf("got %+v, want number 4711 name Frodo", got)
 	}
 
 	if _, err := c.GetEmployee(context.Background(), 404); !errors.Is(err, ErrNotFound) {

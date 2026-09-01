@@ -140,11 +140,11 @@ func TestEmployeesDataSource_ConfigureAcceptsClient(t *testing.T) {
 func TestEmployeesDataSource_MapsDomainToStateModel(t *testing.T) {
 	employees := []client.Employee{
 		{
-			Number: 4711, Name: "Anders", Title: "Montør", Phone: "+45 12 34 56 78",
+			Number: 4711, Name: "Frodo", Title: "Ringbearer", Phone: "+45 12 34 56 78",
 			Image: "https://img", IsAdmin: false, IsLeader: true,
 			Settings: []client.Setting{{Key: "k1", Value: "v1"}, {Key: "k2", Value: "v2"}},
 		},
-		{Number: 4712, Name: "Bea", Settings: []client.Setting{}},
+		{Number: 4712, Name: "Sam", Settings: []client.Setting{}},
 	}
 
 	state := buildEmployeesState(employees, nil)
@@ -155,7 +155,7 @@ func TestEmployeesDataSource_MapsDomainToStateModel(t *testing.T) {
 	if state[0].Number.ValueInt64() != 4711 {
 		t.Errorf("Number = %d, want 4711", state[0].Number.ValueInt64())
 	}
-	if state[0].Title.ValueString() != "Montør" {
+	if state[0].Title.ValueString() != "Ringbearer" {
 		t.Errorf("Title = %q, non-ASCII must survive", state[0].Title.ValueString())
 	}
 	if !state[0].IsLeader.ValueBool() {

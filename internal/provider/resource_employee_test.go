@@ -498,12 +498,12 @@ func TestCreateEmployee_RequiresInternalCredentials(t *testing.T) {
 
 func TestReadEmployee_RefreshesActivationAndComputedFields(t *testing.T) {
 	fi := newFakeInternal(client.Worker{
-		WorkerNr: 3, Name: "X", Title: "Montør", Phone: "+45",
+		WorkerNr: 3, Name: "X", Title: "Ringbearer", Phone: "+45",
 		Department: "Ops", Initials: "XX", IsValidated: false,
 	})
 	fi.info = client.WorkerInfo{
 		WorkerNr: 3, WorkerID: 3, Name: "X", Email: "upstream@example.com",
-		Title: "Montør", Phone: "+45", Department: "Ops", Initials: "XX",
+		Title: "Ringbearer", Phone: "+45", Department: "Ops", Initials: "XX",
 		NormHours: "37", DateOfEmployment: "2020-01-01", IsLeader: true,
 	}
 	r := newEmployeeResource(fi)
@@ -1167,7 +1167,7 @@ func TestCreateEmployee_AppliesDeclaredFields(t *testing.T) {
 	r := newEmployeeResource(fi)
 
 	m := employeeModelFor(20, "New", "n@example.com", true)
-	m.Title = types.StringValue("Montør")
+	m.Title = types.StringValue("Ringbearer")
 	m.Phone = types.StringValue("12345678")
 	m.IsLeader = types.BoolValue(true)
 
@@ -1227,7 +1227,7 @@ func TestCreateEmployee_AdoptionDoesNotBlankUndeclaredFields(t *testing.T) {
 	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "Existing", IsValidated: true})
 	fi.info = client.WorkerInfo{
 		WorkerNr: 3, WorkerID: 3, Name: "Existing", Email: "e@example.com",
-		Title: "Montør", Department: "Ops", Initials: "EX", Phone: "111",
+		Title: "Ringbearer", Department: "Ops", Initials: "EX", Phone: "111",
 		IsLeader: true, IsValidated: true,
 	}
 	r := newEmployeeResource(fi)
@@ -1254,7 +1254,7 @@ func TestCreateEmployee_AdoptionDoesNotBlankUndeclaredFields(t *testing.T) {
 	// And the employee's real values must survive into state.
 	var got employeeResourceModel
 	resp.State.Get(context.Background(), &got)
-	if got.Department.ValueString() != "Ops" || got.Title.ValueString() != "Montør" {
+	if got.Department.ValueString() != "Ops" || got.Title.ValueString() != "Ringbearer" {
 		t.Errorf("adopted values lost: department=%q title=%q",
 			got.Department.ValueString(), got.Title.ValueString())
 	}

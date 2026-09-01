@@ -15,8 +15,8 @@ import (
 func TestDecodeEmployee_FullPayload(t *testing.T) {
 	body := `{
 		"number": 4711,
-		"name": "Anders Jensen",
-		"title": "Montør",
+		"name": "Frodo Baggins",
+		"title": "Ringbearer",
 		"image": "https://app.kala.dk/img/4711.jpg",
 		"phone": "+45 12 34 56 78",
 		"isAdmin": false,
@@ -35,11 +35,11 @@ func TestDecodeEmployee_FullPayload(t *testing.T) {
 	if got.Number != 4711 {
 		t.Errorf("Number = %d, want 4711", got.Number)
 	}
-	if got.Name != "Anders Jensen" {
-		t.Errorf("Name = %q, want %q", got.Name, "Anders Jensen")
+	if got.Name != "Frodo Baggins" {
+		t.Errorf("Name = %q, want %q", got.Name, "Frodo Baggins")
 	}
-	if got.Title != "Montør" {
-		t.Errorf("Title = %q, want %q (non-ASCII must survive)", got.Title, "Montør")
+	if got.Title != "Ringbearer" {
+		t.Errorf("Title = %q, want %q (non-ASCII must survive)", got.Title, "Ringbearer")
 	}
 	if got.IsAdmin {
 		t.Error("IsAdmin = true, want false")

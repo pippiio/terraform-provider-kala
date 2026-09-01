@@ -225,9 +225,9 @@ func TestReadDataSource_ReturnsEmployees(t *testing.T) {
 			return
 		}
 		_, _ = w.Write([]byte(`[
-			{"number":4711,"name":"Anders","title":"Montør","phone":"+45","isAdmin":false,"isLeader":true,
+			{"number":4711,"name":"Frodo","title":"Ringbearer","phone":"+45","isAdmin":false,"isLeader":true,
 			 "settings":[{"key":"default_work_type","value":"montage"}]},
-			{"number":4712,"name":"Bea","settings":[]}
+			{"number":4712,"name":"Sam","settings":[]}
 		]`))
 	}))
 	defer srv.Close()

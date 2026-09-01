@@ -49,15 +49,15 @@ func newInternalMock(t *testing.T) *internalMock {
 				return
 			}
 			_ = json.NewEncoder(w).Encode(wireSignInResponse{
-				GlobalUserID:     38357,
+				GlobalUserID:     9001,
 				SecureLoginToken: "secure-login-token",
-				Companies:        []wireCompany{{ID: 17221, Name: "TechChapter"}},
+				Companies:        []wireCompany{{ID: 4242, Name: "Rivendell"}},
 			})
 
 		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
 			atomic.AddInt32(&m.selects, 1)
 			_ = json.NewEncoder(w).Encode(wireSelectCompanyResponse{
-				GlobalCompanyName: "TechChapter",
+				GlobalCompanyName: "Rivendell",
 				Token:             "session-token",
 			})
 
@@ -130,7 +130,7 @@ func (m *internalMock) client() InternalClient {
 
 func TestInternal_SignInSelectCompanyHandshake(t *testing.T) {
 	m := newInternalMock(t)
-	m.addWorker(1, "Alice", true)
+	m.addWorker(1, "Galadriel", true)
 
 	if _, err := m.client().ListWorkers(context.Background()); err != nil {
 		t.Fatalf("ListWorkers: %v", err)
@@ -147,7 +147,7 @@ func TestInternal_SignInSelectCompanyHandshake(t *testing.T) {
 // The handshake is expensive; a client must not repeat it per request.
 func TestInternal_SessionIsReusedAcrossCalls(t *testing.T) {
 	m := newInternalMock(t)
-	m.addWorker(1, "Alice", true)
+	m.addWorker(1, "Galadriel", true)
 	c := m.client()
 
 	for i := 0; i < 3; i++ {
@@ -200,7 +200,7 @@ func TestInternal_PasswordNeverAppearsInErrors(t *testing.T) {
 
 func TestInternal_SetWorkerValidatedDeactivates(t *testing.T) {
 	m := newInternalMock(t)
-	m.addWorker(42, "Bob", true)
+	m.addWorker(42, "Gimli", true)
 
 	if err := m.client().SetWorkerValidated(context.Background(), 42, false); err != nil {
 		t.Fatalf("SetWorkerValidated: %v", err)
@@ -220,7 +220,7 @@ func TestInternal_SetWorkerValidatedDeactivates(t *testing.T) {
 // ARCH1.8: HTTP 200 is not proof. A write that does not take effect must fail.
 func TestInternal_SetWorkerValidatedFailsWhenUnverified(t *testing.T) {
 	m := newInternalMock(t)
-	m.addWorker(42, "Bob", true)
+	m.addWorker(42, "Gimli", true)
 	m.setValNoEffect = true // 200 OK, but nothing changes
 
 	err := m.client().SetWorkerValidated(context.Background(), 42, false)
@@ -234,7 +234,7 @@ func TestInternal_SetWorkerValidatedFailsWhenUnverified(t *testing.T) {
 
 func TestInternal_SetWorkerValidatedPropagatesHTTPError(t *testing.T) {
 	m := newInternalMock(t)
-	m.addWorker(42, "Bob", true)
+	m.addWorker(42, "Gimli", true)
 	m.setValStatus = http.StatusForbidden
 
 	if err := m.client().SetWorkerValidated(context.Background(), 42, false); err == nil {
@@ -244,7 +244,7 @@ func TestInternal_SetWorkerValidatedPropagatesHTTPError(t *testing.T) {
 
 func TestInternal_GetWorkerNotFound(t *testing.T) {
 	m := newInternalMock(t)
-	m.addWorker(1, "Alice", true)
+	m.addWorker(1, "Galadriel", true)
 
 	_, err := m.client().GetWorker(context.Background(), 999)
 	if !errors.Is(err, ErrNotFound) {
@@ -339,7 +339,7 @@ func workerInfoMock(t *testing.T, handler http.HandlerFunc) InternalClient {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/Auth/SignIn/"):
-			_, _ = w.Write([]byte(`{"secureLoginToken":"t","companies":[{"id":17221}]}`))
+			_, _ = w.Write([]byte(`{"secureLoginToken":"t","companies":[{"id":4242}]}`))
 		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
 			_, _ = w.Write([]byte(`{"token":"session-token"}`))
 		default:
@@ -461,7 +461,7 @@ func emailMock(t *testing.T, applyWrite bool, setStatus int) (InternalClient, *[
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/Auth/SignIn/"):
-			_, _ = w.Write([]byte(`{"secureLoginToken":"t","companies":[{"id":17221}]}`))
+			_, _ = w.Write([]byte(`{"secureLoginToken":"t","companies":[{"id":4242}]}`))
 		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
 			_, _ = w.Write([]byte(`{"token":"session-token"}`))
 		case strings.HasSuffix(r.URL.Path, "/api/SetEmailNew/"):
@@ -495,13 +495,13 @@ func emailMock(t *testing.T, applyWrite bool, setStatus int) (InternalClient, *[
 func TestInternal_SetWorkerEmailSendsWorkerNrAndEmail(t *testing.T) {
 	c, calls := emailMock(t, true, 0)
 
-	if err := c.SetWorkerEmail(context.Background(), 3, "test2@archan.dk"); err != nil {
+	if err := c.SetWorkerEmail(context.Background(), 3, "samwise@example.com"); err != nil {
 		t.Fatalf("SetWorkerEmail: %v", err)
 	}
 	if len(*calls) != 1 {
 		t.Fatalf("want one call, got %d", len(*calls))
 	}
-	if (*calls)[0].WorkerNr != 3 || (*calls)[0].Email != "test2@archan.dk" {
+	if (*calls)[0].WorkerNr != 3 || (*calls)[0].Email != "samwise@example.com" {
 		t.Errorf("sent %+v", (*calls)[0])
 	}
 }
@@ -530,7 +530,7 @@ func TestInternal_SetWorkerEmailAcceptsCaseDifference(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
 			_, _ = w.Write([]byte(`{"token":"session-token"}`))
 		case strings.HasSuffix(r.URL.Path, "/api/SetEmailNew/"):
-			current = "TEST@ARCHAN.DK" // upstream upper-cases it
+			current = "FRODO@EXAMPLE.COM" // upstream upper-cases it
 			w.WriteHeader(http.StatusOK)
 		default:
 			_, _ = w.Write([]byte(`{"workerNr":3,"email":"` + current + `"}`))
@@ -539,7 +539,7 @@ func TestInternal_SetWorkerEmailAcceptsCaseDifference(t *testing.T) {
 	defer srv.Close()
 
 	c := NewInternal(InternalConfig{Endpoint: srv.URL, Username: "u", Password: "p", retryBaseDur: time.Microsecond})
-	if err := c.SetWorkerEmail(context.Background(), 3, "test@archan.dk"); err != nil {
+	if err := c.SetWorkerEmail(context.Background(), 3, "frodo@example.com"); err != nil {
 		t.Errorf("a case-only difference should be accepted: %v", err)
 	}
 }
@@ -582,7 +582,7 @@ func TestInternal_ConcurrentCallsShareOneLogin(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/Auth/SignIn/"):
 			atomic.AddInt32(&signIns, 1)
 			time.Sleep(10 * time.Millisecond) // widen the race window
-			_, _ = w.Write([]byte(`{"secureLoginToken":"t","companies":[{"id":17221}]}`))
+			_, _ = w.Write([]byte(`{"secureLoginToken":"t","companies":[{"id":4242}]}`))
 		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
 			atomic.AddInt32(&selects, 1)
 			_, _ = w.Write([]byte(`{"token":"session-token"}`))
