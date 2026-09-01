@@ -14,6 +14,10 @@ import (
 // Beyond this, "did you mean" stops being helpful and starts being noise.
 const closestKeyMaxDistance = 3
 
+// maxDeepScanEmployees bounds the per-employee scan in ListSettingKeys so a
+// large account cannot turn one Create into thousands of requests.
+const maxDeepScanEmployees = 200
+
 // SettingMetadata carries the write-only half of a setting.
 //
 // SetEmployeeSetting REQUIRES friendlyName and accepts an optional type, but
@@ -82,7 +86,14 @@ func (c *webAPIv2) ApplyEmployeeSetting(ctx context.Context, employeeNumber int6
 //
 // This backs the unknown-key guard. Because settings cannot be deleted, writing
 // a typo'd key permanently adds junk to a real person's record, so knowing which
-// keys legitimately exist is worth a full list call.
+// keys legitimately exist is worth the cost of finding them accurately.
+//
+// It deliberately does an N+1 scan: ActiveEmployeesList UNDER-REPORTS settings.
+// Observed 2026-09-01 against the real API — for the same employee the list
+// returned 11 keys while ActiveEmployee returned 12, omitting
+// "favorite_materials". Relying on the list alone would make the guard reject
+// keys that genuinely exist. The per-employee fetch is bounded by
+// maxDeepScanEmployees and only runs on resource creation, not on every plan.
 func (c *webAPIv2) ListSettingKeys(ctx context.Context) ([]string, error) {
 	employees, err := c.ListEmployees(ctx, ListOptions{})
 	if err != nil {
@@ -92,6 +103,27 @@ func (c *webAPIv2) ListSettingKeys(ctx context.Context) ([]string, error) {
 	seen := make(map[string]struct{})
 	for _, e := range employees {
 		for _, s := range e.Settings {
+			if s.Key != "" {
+				seen[s.Key] = struct{}{}
+			}
+		}
+	}
+
+	// Second pass: the single-employee endpoint reveals keys the list omits.
+	scanned := 0
+	for _, e := range employees {
+		if scanned >= maxDeepScanEmployees {
+			break
+		}
+		scanned++
+
+		full, err := c.GetEmployee(ctx, e.Number)
+		if err != nil {
+			// Best-effort enrichment: a failure here degrades the guard's
+			// completeness but must not block the caller entirely.
+			continue
+		}
+		for _, s := range full.Settings {
 			if s.Key != "" {
 				seen[s.Key] = struct{}{}
 			}

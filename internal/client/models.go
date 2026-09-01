@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 )
@@ -70,7 +71,16 @@ func (w wireEmployee) toDomain() (Employee, error) {
 }
 
 // decodeEmployee decodes a single-employee response body.
+//
+// An empty body means the record does not exist. Observed 2026-09-01 against
+// the real API: requesting an unknown employeeNumber returns HTTP 200 with
+// content-length 0 rather than 404. Treating that as a decode failure would
+// make Read error instead of detecting drift (guardrail TF1.2).
 func decodeEmployee(body []byte) (Employee, error) {
+	if len(bytes.TrimSpace(body)) == 0 {
+		return Employee{}, fmt.Errorf("%w: the API returned an empty body, which means no such employee", ErrNotFound)
+	}
+
 	var w wireEmployee
 	if err := json.Unmarshal(body, &w); err != nil {
 		return Employee{}, fmt.Errorf("%w: %v", ErrDecode, err)
@@ -84,6 +94,12 @@ func decodeEmployee(body []byte) (Employee, error) {
 // silently return fewer employees than exist, which Terraform would read as a
 // deletion.
 func decodeEmployeeList(body []byte) ([]Employee, error) {
+	// An empty body on a LIST means no records — unlike the single-employee
+	// endpoint, where it means not-found.
+	if len(bytes.TrimSpace(body)) == 0 {
+		return []Employee{}, nil
+	}
+
 	var ws []wireEmployee
 	if err := json.Unmarshal(body, &ws); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrDecode, err)
