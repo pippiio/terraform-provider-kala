@@ -26,7 +26,9 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
@@ -267,9 +269,21 @@ func (d *customerDataSource) Metadata(_ context.Context, req datasource.Metadata
 
 func (d *customerDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	attrs := customerAttributes()
+	// Selectors. Exactly one must be set; which one is checked at read time
+	// rather than by a schema validator, so the diagnostic can name all of them.
 	attrs["id"] = schema.Int64Attribute{
-		Required:            true,
-		MarkdownDescription: "The customer id to look up.",
+		Optional: true, Computed: true,
+		MarkdownDescription: "Look up by Kala's internal customer id. Unlike the other selectors " +
+			"this cannot be narrowed upstream -- Kala's `query` parameter searches text -- so an " +
+			"id lookup reads the customer list and selects from it.",
+	}
+	attrs["number"] = schema.StringAttribute{
+		Optional: true, Computed: true,
+		MarkdownDescription: "Look up by customer number, e.g. `K-001`. Narrowed upstream before matching.",
+	}
+	attrs["cvr"] = schema.StringAttribute{
+		Optional: true, Computed: true,
+		MarkdownDescription: "Look up by Danish CVR registration number. Narrowed upstream before matching.",
 	}
 	attrs["include_contact_details"] = schema.BoolAttribute{
 		Optional:            true,
@@ -315,7 +329,15 @@ func (d *customerDataSource) Read(ctx context.Context, req datasource.ReadReques
 		return
 	}
 
-	scan, err := d.client.ListCustomers(ctx, client.CustomerQuery{})
+	sel, err := resolveCustomerSelector(config)
+	if err != nil {
+		resp.Diagnostics.AddError("Ambiguous or missing customer selector", err.Error())
+		return
+	}
+
+	// Narrow server-side where the selector allows it. This is what keeps a cvr
+	// lookup from having to read the whole account.
+	scan, err := d.client.ListCustomers(ctx, client.CustomerQuery{Search: sel.prefilter})
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Could not read Kala customers",
@@ -324,43 +346,52 @@ func (d *customerDataSource) Read(ctx context.Context, req datasource.ReadReques
 		return
 	}
 
-	id := config.ID.ValueInt64()
-	found, ok, partial := selectCustomer(scan, id, config.IncludeContactDetails.ValueBool())
+	// The query parameter narrows; it does not exact-match. Filtering here is
+	// what turns "customers mentioning 12345678" into "the customer whose cvr
+	// IS 12345678".
+	matches, partial := matchCustomers(scan, sel.match, config.IncludeContactDetails.ValueBool())
 
 	switch {
-	case ok:
-		// fall through
-	case partial:
-		// Absence from a partial read proves nothing. Saying "not found" here
-		// would be a confident wrong answer.
+	case len(matches) == 1:
+		// resolved
+	case len(matches) > 1:
 		resp.Diagnostics.AddAttributeError(
-			path.Root("id"),
+			path.Root(sel.attr),
+			"Customer lookup matched more than one record",
+			fmt.Sprintf("%d customers have %s = %q. A data source must resolve to exactly one "+
+				"record, so this cannot be narrowed automatically. Use `id`, which is unique.",
+				len(matches), sel.attr, sel.value),
+		)
+		return
+	case partial:
+		resp.Diagnostics.AddAttributeError(
+			path.Root(sel.attr),
 			"Customer lookup could not be completed",
-			fmt.Sprintf("Customer %d was not among the %d of %d records read before the "+
+			fmt.Sprintf("No customer with %s = %q was among the %d of %d records read before the "+
 				"pagination cap was reached, so it cannot be reported as missing. Raise "+
-				"`page_size` and try again.", id, scan.Fetched, scan.Total),
+				"`page_size` and try again.", sel.attr, sel.value, scan.Fetched, scan.Total),
 		)
 		return
 	default:
 		resp.Diagnostics.AddAttributeError(
-			path.Root("id"),
+			path.Root(sel.attr),
 			"Customer not found",
-			fmt.Sprintf("No customer with id %d exists in this Kala account. All %d customers "+
-				"were read.", id, scan.Total),
+			fmt.Sprintf("No customer with %s = %q exists in this Kala account.", sel.attr, sel.value),
 		)
 		return
 	}
 
-	tflog.Debug(ctx, "read Kala customer", map[string]any{"id": id})
+	found := matches[0]
+	tflog.Debug(ctx, "read Kala customer", map[string]any{"selector": sel.attr})
 
 	state := customerDataSourceModel{
-		ID:                    config.ID,
 		IncludeContactDetails: config.IncludeContactDetails,
+		ID:                    found.ID,
 		Number:                found.Number,
+		CVR:                   found.CVR,
 		FirstName:             found.FirstName,
 		LastName:              found.LastName,
 		Company:               found.Company,
-		CVR:                   found.CVR,
 		CaseCount:             found.CaseCount,
 		Email:                 found.Email,
 		Phone:                 found.Phone,
@@ -425,12 +456,82 @@ func buildCustomerModel(c client.Customer, includeContacts bool) customerModel {
 // partial read is reported through the third return value so the caller can say
 // "the read did not cover the account" instead of "no such customer".
 func selectCustomer(scan client.CustomerScan, id int64, includeContacts bool) (customerModel, bool, bool) {
+	matches, partial := matchCustomers(scan, func(c client.Customer) bool { return c.ID == id }, includeContacts)
+	if len(matches) == 0 {
+		return customerModel{}, false, partial
+	}
+	return matches[0], true, false
+}
+
+// matchCustomers returns every customer satisfying match, and whether a lack of
+// matches is inconclusive because the read did not cover the account.
+//
+// The partial flag is the important half. Kala's query parameter narrows a read
+// but a capped page still proves nothing about absence, so "no match" and "no
+// match that we saw" must stay distinguishable.
+func matchCustomers(scan client.CustomerScan, match func(client.Customer) bool, includeContacts bool) ([]customerModel, bool) {
+	var out []customerModel
 	for _, c := range scan.Customers {
-		if c.ID == id {
-			return buildCustomerModel(c, includeContacts), true, false
+		if match(c) {
+			out = append(out, buildCustomerModel(c, includeContacts))
 		}
 	}
-	// Not present in what was read. Whether that means "does not exist" depends
-	// entirely on whether the read covered the account.
-	return customerModel{}, false, !scan.Complete()
+	return out, len(out) == 0 && !scan.Complete()
+}
+
+// customerSelector describes which attribute a lookup was addressed by.
+type customerSelector struct {
+	attr  string
+	value string
+	match func(client.Customer) bool
+
+	// prefilter is the value sent as Kala's `query` parameter to narrow the
+	// read server-side. Empty for id: query searches TEXT, so an id sent
+	// through it returns nothing and the lookup would report an existing
+	// customer as missing.
+	prefilter string
+}
+
+// resolveCustomerSelector requires exactly one selector to be set.
+func resolveCustomerSelector(cfg customerDataSourceModel) (customerSelector, error) {
+	var set []customerSelector
+
+	if !cfg.ID.IsNull() && !cfg.ID.IsUnknown() {
+		id := cfg.ID.ValueInt64()
+		set = append(set, customerSelector{
+			attr: "id", value: fmt.Sprintf("%d", id),
+			match: func(c client.Customer) bool { return c.ID == id },
+		})
+	}
+	if !cfg.Number.IsNull() && !cfg.Number.IsUnknown() {
+		v := cfg.Number.ValueString()
+		set = append(set, customerSelector{
+			attr: "number", value: v, prefilter: v,
+			match: func(c client.Customer) bool { return c.Number == v },
+		})
+	}
+	if !cfg.CVR.IsNull() && !cfg.CVR.IsUnknown() {
+		v := cfg.CVR.ValueString()
+		set = append(set, customerSelector{
+			attr: "cvr", value: v, prefilter: v,
+			match: func(c client.Customer) bool { return c.CVR == v },
+		})
+	}
+
+	switch len(set) {
+	case 1:
+		return set[0], nil
+	case 0:
+		return customerSelector{}, errors.New(
+			"Set exactly one of `id`, `number`, or `cvr` to identify the customer.")
+	default:
+		names := make([]string, 0, len(set))
+		for _, s := range set {
+			names = append(names, "`"+s.attr+"`")
+		}
+		return customerSelector{}, fmt.Errorf(
+			"Set exactly one of `id`, `number`, or `cvr`; %s were all set. "+
+				"A data source must resolve to a single customer, and combining selectors "+
+				"hides which one actually decided the result.", strings.Join(names, ", "))
+	}
 }

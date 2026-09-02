@@ -57,18 +57,6 @@ func TestCustomersDataSource_SchemaExposesCompleteness(t *testing.T) {
 	}
 }
 
-func TestCustomerDataSource_SchemaRequiresID(t *testing.T) {
-	var resp datasource.SchemaResponse
-	NewCustomerDataSource().Schema(context.Background(), datasource.SchemaRequest{}, &resp)
-	attr, ok := resp.Schema.Attributes["id"]
-	if !ok {
-		t.Fatal("schema is missing id")
-	}
-	if !attr.IsRequired() {
-		t.Error("id must be Required -- it is the lookup key, not an optional filter")
-	}
-}
-
 func TestBuildCustomersState_MapsNonContactFields(t *testing.T) {
 	got := buildCustomersState(sampleCustomers(), false)
 	if len(got) != 2 {
