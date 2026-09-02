@@ -14,7 +14,19 @@ const redactedPlaceholder = "REDACTED"
 // The Kala API is inconsistent about its own auth parameter: the Index endpoint
 // spells it "apikey" while every other endpoint uses "api_key". Both are listed
 // because redaction must not depend on which endpoint produced the URL.
-var sensitiveParams = []string{"api_key", "apikey", "password", "token", "secureLoginToken"}
+var sensitiveParams = []string{
+	"api_key", "apikey", "password", "token", "secureLoginToken",
+
+	// kauthtoken cannot be caught by the "token" entry: indexParamAssignment
+	// requires a delimiter before the name, so "kauthtoken=" never matches
+	// "token=". It is listed in its own right.
+	"kauthtoken",
+
+	// The username is the account identifier and personal data (SEC1.5). It is
+	// not a credential on its own, but it has no business in an error message
+	// or a log line either.
+	"username",
+}
 
 func isSensitiveParam(name string) bool {
 	for _, s := range sensitiveParams {
@@ -90,7 +102,19 @@ func sanitizeError(err error) error {
 
 // redactSensitiveValues replaces `name=value` occurrences of sensitive
 // parameters anywhere in s, including inside a URL embedded in free text.
+// redactSensitiveValues scrubs credential values from arbitrary text, covering
+// both wire shapes this API produces:
+//
+//   - name=value      query strings and form-encoded bodies
+//   - "name":"value"  JSON, which the internal app API uses throughout
+//
+// Both are needed. The JSON pass exists because a real leak was found without
+// it: the sign-in request body carries the password, and an upstream error
+// response that echoes the request back put it verbatim into an error message.
+// Kala demonstrably echoes request data in errors -- its webapiv2 500 page
+// includes the full query string, api_key included.
 func redactSensitiveValues(s string) string {
+	s = redactJSONValues(s)
 	for _, name := range sensitiveParams {
 		for {
 			idx := indexParamAssignment(s, name)
@@ -141,4 +165,73 @@ func isNameBoundary(c byte) bool {
 
 func isValueTerminator(c byte) bool {
 	return c == '&' || c == '"' || c == ' ' || c == '\'' || c == '\n' || c == '\\'
+}
+
+// redactJSONValues replaces the value of any sensitive JSON key, handling both
+// quoted strings and bare literals, with or without whitespace after the colon.
+//
+// It is deliberately a string operation rather than a parse: the input is an
+// error-body sample that is frequently truncated and often not valid JSON at
+// all, and failing to parse must not mean failing to redact.
+func redactJSONValues(s string) string {
+	for _, name := range sensitiveParams {
+		needle := `"` + name + `"`
+		from := 0
+		for {
+			i := strings.Index(s[from:], needle)
+			if i < 0 {
+				break
+			}
+			abs := from + i
+			j := abs + len(needle)
+			for j < len(s) && (s[j] == ' ' || s[j] == '\t') {
+				j++
+			}
+			if j >= len(s) || s[j] != ':' {
+				from = abs + len(needle)
+				continue
+			}
+			j++
+			for j < len(s) && (s[j] == ' ' || s[j] == '\t') {
+				j++
+			}
+			if j >= len(s) {
+				break
+			}
+
+			if s[j] == '"' {
+				valStart := j + 1
+				valEnd := valStart
+				for valEnd < len(s) && s[valEnd] != '"' {
+					if s[valEnd] == '\\' {
+						valEnd++
+					}
+					valEnd++
+				}
+				if valEnd > len(s) {
+					valEnd = len(s)
+				}
+				if s[valStart:min(valEnd, len(s))] == redactedPlaceholder {
+					from = valEnd
+					continue
+				}
+				s = s[:valStart] + redactedPlaceholder + s[min(valEnd, len(s)):]
+				from = valStart + len(redactedPlaceholder)
+				continue
+			}
+
+			valStart := j
+			valEnd := valStart
+			for valEnd < len(s) && s[valEnd] != ',' && s[valEnd] != '}' && s[valEnd] != ']' {
+				valEnd++
+			}
+			if valEnd == valStart {
+				from = j
+				continue
+			}
+			s = s[:valStart] + redactedPlaceholder + s[valEnd:]
+			from = valStart + len(redactedPlaceholder)
+		}
+	}
+	return s
 }

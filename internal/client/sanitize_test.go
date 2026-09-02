@@ -94,3 +94,110 @@ func TestSanitizeError_PreservesErrorsIsChain(t *testing.T) {
 		t.Errorf("sanitizeError broke the errors.Is chain for %v", sentinel)
 	}
 }
+
+// redactJSONValues exists because a real leak was found without it: the
+// sign-in body carries the password, and an upstream error echoing the request
+// put it verbatim into an error message (SEC1.3).
+func TestRedactSensitiveValues_JSONBodies(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      string
+		absent  []string
+		present []string
+	}{
+		{
+			name:   "sign-in body",
+			in:     `{"username":"user@example.com","password":"hunter2","appType":"web"}`,
+			absent: []string{"user@example.com", "hunter2"},
+			// Non-sensitive fields survive: the detail is still useful for debugging.
+			present: []string{"appType", "web", redactedPlaceholder},
+		},
+		{
+			name:    "whitespace after the colon",
+			in:      `{"password": "hunter2"}`,
+			absent:  []string{"hunter2"},
+			present: []string{redactedPlaceholder},
+		},
+		{
+			name:    "bare literal value",
+			in:      `{"token":12345,"other":1}`,
+			absent:  []string{"12345"},
+			present: []string{"other", redactedPlaceholder},
+		},
+		{
+			name:    "kauthtoken is caught in its own right",
+			in:      `{"kauthtoken":"38357:17221;abc="}`,
+			absent:  []string{"38357:17221"},
+			present: []string{redactedPlaceholder},
+		},
+		{
+			name:    "truncated body still redacts",
+			in:      `{"username":"user@example.com","password":"hunter`,
+			absent:  []string{"user@example.com"},
+			present: []string{redactedPlaceholder},
+		},
+		{
+			name:    "already redacted is left alone",
+			in:      `{"password":"` + redactedPlaceholder + `"}`,
+			present: []string{redactedPlaceholder},
+		},
+		{
+			name:    "both wire shapes in one string",
+			in:      `api_key=secret1 {"password":"secret2"}`,
+			absent:  []string{"secret1", "secret2"},
+			present: []string{redactedPlaceholder},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := redactSensitiveValues(tc.in)
+			for _, a := range tc.absent {
+				if strings.Contains(got, a) {
+					t.Errorf("%q survived redaction: %s", a, got)
+				}
+			}
+			for _, p := range tc.present {
+				if !strings.Contains(got, p) {
+					t.Errorf("%q missing from output: %s", p, got)
+				}
+			}
+		})
+	}
+}
+
+// Malformed and adversarial inputs: redaction must fail closed rather than
+// panic or silently pass a secret through. The input is an error-body sample,
+// so truncation and invalid JSON are the normal case, not the exception.
+func TestRedactJSONValues_MalformedInput(t *testing.T) {
+	tests := []struct {
+		name   string
+		in     string
+		absent []string
+	}{
+		{name: "key with no colon", in: `{"password" "hunter2"}`, absent: nil},
+		{name: "key at end of string", in: `{"password"`, absent: nil},
+		{name: "colon then end of string", in: `{"password":`, absent: nil},
+		{name: "escaped quote inside value", in: `{"password":"hun\"ter2","x":1}`, absent: []string{"hun"}},
+		{name: "unterminated string value", in: `{"password":"hunter2`, absent: []string{"hunter2"}},
+		{name: "empty string value", in: `{"password":""}`, absent: nil},
+		{name: "key appears as a value", in: `{"note":"password"}`, absent: nil},
+		{name: "repeated sensitive keys", in: `{"password":"a","token":"b","password":"c"}`, absent: []string{`"a"`, `"b"`, `"c"`}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := redactJSONValues(tc.in) // must not panic
+			for _, a := range tc.absent {
+				if strings.Contains(got, a) {
+					t.Errorf("%q survived redaction: %s", a, got)
+				}
+			}
+		})
+	}
+}
+
+func TestRedactSensitiveValues_LeavesUnrelatedJSONIntact(t *testing.T) {
+	in := `{"caseName":"Roof works","statusName":"Færdig","priceFixed":550}`
+	if got := redactSensitiveValues(in); got != in {
+		t.Errorf("unrelated JSON was altered:\n got %s\nwant %s", got, in)
+	}
+}
