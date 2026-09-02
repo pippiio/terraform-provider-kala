@@ -1,0 +1,258 @@
+// Story: Customer data sources (kala_customers, kala_customer)
+//
+// Input:  Terraform config -- optional search/page_size/include_contact_details
+//         on the list; a required id on the singular one.
+// Process:
+//   1. Read customers through the internal-API client, which pages until the
+//      account is covered or its cap is reached and reports which happened.
+//   2. Surface that coverage as a `complete` attribute rather than hiding it.
+//      Upstream returns totalCount, so this is a direct comparison, not a guess.
+//   3. Withhold contact details unless include_contact_details is set. Email,
+//      phone, address, zip, city, and ean are personal and commercial data, and
+//      everything a data source exposes is written to Terraform state (FR7).
+//   4. For kala_customer, select by id from the list. Upstream has NO by-id
+//      endpoint, so this is client-side selection, not a lookup.
+//   5. When the id is absent from an INCOMPLETE read, say the read was
+//      incomplete -- never "no such customer". The read did not cover the
+//      account, so absence proves nothing. Reporting it as not-found would be
+//      a confident wrong answer, which is the failure mode this whole track
+//      keeps running into.
+// Output: Terraform state.
+//
+// Dependencies: client.InternalClient (ListCustomers).
+// Side effects: none. Reads only; customers are owned by e-conomic.
+
+package provider
+
+import (
+	"context"
+
+	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"github.com/techchapter/terraform-provider-kala/internal/client"
+)
+
+var (
+	_ datasource.DataSource              = &customersDataSource{}
+	_ datasource.DataSourceWithConfigure = &customersDataSource{}
+	_ datasource.DataSource              = &customerDataSource{}
+	_ datasource.DataSourceWithConfigure = &customerDataSource{}
+)
+
+// customerModel is shared by both data sources.
+//
+// Contact fields are null unless the caller opted in. Null means "not
+// requested" rather than "empty upstream"; the two are deliberately
+// indistinguishable here because exposing which is which would leak the very
+// thing the opt-in withholds.
+type customerModel struct {
+	ID        types.Int64  `tfsdk:"id"`
+	Number    types.String `tfsdk:"number"`
+	FirstName types.String `tfsdk:"first_name"`
+	LastName  types.String `tfsdk:"last_name"`
+	Company   types.String `tfsdk:"company"`
+	CVR       types.String `tfsdk:"cvr"`
+	CaseCount types.Int64  `tfsdk:"case_count"`
+
+	Email   types.String `tfsdk:"email"`
+	Phone   types.String `tfsdk:"phone"`
+	Address types.String `tfsdk:"address"`
+	Zip     types.String `tfsdk:"zip"`
+	City    types.String `tfsdk:"city"`
+	EAN     types.String `tfsdk:"ean"`
+}
+
+func customerAttributes() map[string]schema.Attribute {
+	return map[string]schema.Attribute{
+		"id": schema.Int64Attribute{
+			Computed: true,
+			MarkdownDescription: "Kala's internal customer id. This is the value `kala_case` " +
+				"records reference, and the identifier to join on.",
+		},
+		"number": schema.StringAttribute{
+			Computed: true,
+			MarkdownDescription: "The customer number. A **string** on this API. Do not assume it " +
+				"equals `id`, and do not assume it matches the integer `number` webapiv2 returns " +
+				"for the same customer -- that equivalence is unverified.",
+		},
+		"first_name": schema.StringAttribute{Computed: true, MarkdownDescription: "Contact's first name."},
+		"last_name":  schema.StringAttribute{Computed: true, MarkdownDescription: "Contact's last name."},
+		"company":    schema.StringAttribute{Computed: true, MarkdownDescription: "Company name."},
+		"cvr":        schema.StringAttribute{Computed: true, MarkdownDescription: "Danish CVR company registration number."},
+		"case_count": schema.Int64Attribute{Computed: true, MarkdownDescription: "How many cases reference this customer."},
+
+		"email":   contactAttr("Email address"),
+		"phone":   contactAttr("Phone number"),
+		"address": contactAttr("Street address"),
+		"zip":     contactAttr("Postal code"),
+		"city":    contactAttr("City"),
+		"ean":     contactAttr("EAN number used for invoicing"),
+	}
+}
+
+func contactAttr(desc string) schema.Attribute {
+	return schema.StringAttribute{
+		Computed: true,
+		MarkdownDescription: desc + ". **Null unless `include_contact_details` is set** -- " +
+			"contact data is personal data and everything exposed here is written to Terraform state.",
+	}
+}
+
+// --- kala_customers -------------------------------------------------------
+
+// NewCustomersDataSource returns the kala_customers data source.
+func NewCustomersDataSource() datasource.DataSource { return &customersDataSource{} }
+
+type customersDataSource struct {
+	client client.InternalClient
+}
+
+type customersDataSourceModel struct {
+	Search                types.String    `tfsdk:"search"`
+	PageSize              types.Int64     `tfsdk:"page_size"`
+	IncludeContactDetails types.Bool      `tfsdk:"include_contact_details"`
+	Complete              types.Bool      `tfsdk:"complete"`
+	Total                 types.Int64     `tfsdk:"total"`
+	Customers             []customerModel `tfsdk:"customers"`
+}
+
+func (d *customersDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_customers"
+}
+
+func (d *customersDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+	resp.Schema = schema.Schema{
+		MarkdownDescription: "Lists customers in Kala. Customers are imported from e-conomic, " +
+			"which owns them, so they are read-only here by design rather than by API limitation.",
+		Attributes: map[string]schema.Attribute{
+			"search": schema.StringAttribute{
+				Optional:            true,
+				MarkdownDescription: "Free-text filter applied upstream.",
+			},
+			"page_size": schema.Int64Attribute{
+				Optional:            true,
+				MarkdownDescription: "Records fetched per request while paginating.",
+			},
+			"include_contact_details": schema.BoolAttribute{
+				Optional: true,
+				MarkdownDescription: "Expose email, phone, address, zip, city, and ean. Off by " +
+					"default: these are personal data under GDPR and Terraform state must be " +
+					"treated as confidential.",
+			},
+			"complete": schema.BoolAttribute{
+				Computed: true,
+				MarkdownDescription: "Whether the read covered every customer the account holds. " +
+					"**False means this list is a subset** -- the page cap was reached before the " +
+					"end of the data. Acting on a partial list as though it were whole is a bug.",
+			},
+			"total": schema.Int64Attribute{
+				Computed:            true,
+				MarkdownDescription: "How many customers the account holds, as reported upstream.",
+			},
+			"customers": schema.ListNestedAttribute{
+				Computed:            true,
+				MarkdownDescription: "The customers returned.",
+				NestedObject:        schema.NestedAttributeObject{Attributes: customerAttributes()},
+			},
+		},
+	}
+}
+
+func (d *customersDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
+	if req.ProviderData == nil {
+		return
+	}
+	c, ok := req.ProviderData.(*providerClients)
+	if !ok {
+		resp.Diagnostics.AddError(
+			"Unexpected provider data",
+			"The kala_customers data source expected configured Kala clients. This is a bug in the provider.",
+		)
+		return
+	}
+	d.client = c.Internal
+}
+
+func (d *customersDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	_ = ctx
+	_ = req
+	_ = resp
+}
+
+// --- kala_customer --------------------------------------------------------
+
+// NewCustomerDataSource returns the kala_customer data source.
+func NewCustomerDataSource() datasource.DataSource { return &customerDataSource{} }
+
+type customerDataSource struct {
+	client client.InternalClient
+}
+
+type customerDataSourceModel struct {
+	ID                    types.Int64 `tfsdk:"id"`
+	IncludeContactDetails types.Bool  `tfsdk:"include_contact_details"`
+	customerModel
+}
+
+func (d *customerDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_customer"
+}
+
+func (d *customerDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+	attrs := customerAttributes()
+	attrs["id"] = schema.Int64Attribute{
+		Required:            true,
+		MarkdownDescription: "The customer id to look up.",
+	}
+	attrs["include_contact_details"] = schema.BoolAttribute{
+		Optional:            true,
+		MarkdownDescription: "Expose email, phone, address, zip, city, and ean. Off by default.",
+	}
+	resp.Schema = schema.Schema{
+		MarkdownDescription: "Looks up one customer by id.\n\n" +
+			"Kala has **no single-customer endpoint**, so this reads the customer list and selects " +
+			"from it. If the account is larger than the read can cover, the lookup reports that the " +
+			"read was incomplete rather than claiming the customer does not exist.",
+		Attributes: attrs,
+	}
+}
+
+func (d *customerDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
+	if req.ProviderData == nil {
+		return
+	}
+	c, ok := req.ProviderData.(*providerClients)
+	if !ok {
+		resp.Diagnostics.AddError(
+			"Unexpected provider data",
+			"The kala_customer data source expected configured Kala clients. This is a bug in the provider.",
+		)
+		return
+	}
+	d.client = c.Internal
+}
+
+func (d *customerDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	_ = ctx
+	_ = req
+	_ = resp
+}
+
+// buildCustomersState converts domain customers into state models.
+//
+// Extracted from Read so the mapping -- including the contact opt-in, which is
+// the part with security consequences -- is testable without framework plumbing.
+func buildCustomersState(customers []client.Customer, includeContacts bool) []customerModel {
+	return nil // stub: RED
+}
+
+// selectCustomer finds one customer by id within a scan.
+//
+// Returns found=false only when the scan was COMPLETE. An id missing from a
+// partial read is reported through the third return value so the caller can say
+// "the read did not cover the account" instead of "no such customer".
+func selectCustomer(scan client.CustomerScan, id int64, includeContacts bool) (customerModel, bool, bool) {
+	return customerModel{}, false, false // stub: RED
+}
