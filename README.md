@@ -63,9 +63,9 @@ private registry) for when a filesystem mirror stops scaling.
 Credentials resolve from the environment, so they need never enter a `.tf` file:
 
 ```bash
-export KALA_API_KEY=...    # webapiv2 — reads
-export KALA_USERNAME=...   # internal app API — employee lifecycle
-export KALA_PASSWORD=...
+export KALA_API_KEY=...    # webapiv2 — employee reads
+export KALA_USERNAME=...   # internal app API — employee lifecycle,
+export KALA_PASSWORD=...   #   plus all customer, case, and task data sources
 ```
 
 ```hcl
@@ -96,9 +96,10 @@ tenant *your credentials* act on, whereas Kala refuses to change the email of an
 lift that restriction.
 
 Kala's surface is split across two APIs and neither is sufficient alone: the
-documented `webapiv2` covers **reads**, while the app's internal API owns employee
-**lifecycle** — creation, activation, and every profile field. Only resources that
-touch lifecycle need `username`/`password`.
+documented `webapiv2` covers **employee reads**, while the app's internal API
+owns employee **lifecycle** — creation, activation, and every profile field —
+and is the **only** source of customers, cases, and tasks. `username`/`password`
+are therefore required by every data source below except `kala_employees`.
 
 ### How the two APIs differ
 
@@ -136,6 +137,12 @@ source.
 |------|------|---------|
 | `kala_employee` | resource | Create, adopt, configure, and deactivate an employee |
 | `kala_employees` | data source | List active employees |
+| `kala_customers` | data source | List customers |
+| `kala_customer` | data source | One customer by `id`, `number`, or `cvr` |
+| `kala_cases` | data source | List cases, active or archived |
+| `kala_case` | data source | One case by number, with the full detail record |
+| `kala_tasks` | data source | Tasks (checklist items) on one case |
+| `kala_task` | data source | One task by `id` or name |
 
 ### Behaviour worth knowing before you apply
 
@@ -179,6 +186,49 @@ same way, via `ChangeBoss`.
 
 Both endpoints are undocumented, so both are covered by acceptance tests that
 assert the change upstream rather than in Terraform state.
+
+**Data sources report whether they read everything.** Every list data source
+exposes a `complete` attribute and warns when its pagination cap was reached
+before the end of the data. A list with `complete = false` is a **subset**, and
+treating it as the whole account is a bug — check it before acting on the result.
+
+The same reasoning governs the single-record lookups. `kala_customer` and
+`kala_task` select client-side, because Kala has no by-id endpoint for either. If
+the record is absent from a read that did **not** cover the account, they say the
+lookup could not be completed rather than reporting the record as missing —
+absence from a partial read proves nothing.
+
+**`kala_cases` selects a set; it does not narrow one.** Kala's archived and
+non-archived cases are disjoint, and no single call returns both. `active = true`
+(the default) returns only active cases and `active = false` returns only
+archived ones, so reading everything takes two blocks and a `concat`.
+
+**`kala_tasks` requires a `case_id`.** Kala addresses checklist items by case and
+has no account-wide task endpoint. Reading tasks across cases is a `for_each`
+composition over `kala_cases`, deliberately left to you rather than hidden in the
+provider as a request-per-case fan-out.
+
+### Personal, commercial, and transactional data in state
+
+Everything a data source exposes is written to Terraform state, and this provider
+reaches data well beyond names and numbers. State files must be treated as
+confidential and stored accordingly.
+
+Sensitive fields are therefore **opt-in and null by default**:
+
+| Opt-in | Exposes |
+|--------|---------|
+| `include_contact_details` | Customer email, phone, address; task assignee, author, and completer |
+| `include_financials` | Case cost, sales, result, invoiced/uninvoiced, realised; task hours and fixed price |
+
+Two things follow. Employee, customer, and task records are **personal data under
+GDPR** — names, emails, phone numbers, and who completed which task. Case and
+task financials are **commercially sensitive**, and a state file in a shared
+backend or a CI artifact distributes them to everyone with access to it.
+
+Kala's "tasks" are checklist items, which carry completion timestamps and
+registered hours. Reading them is supported; *managing* them as Terraform
+resources is not, and remains out of scope — see `draft/product.md`.
 
 ## Development
 
