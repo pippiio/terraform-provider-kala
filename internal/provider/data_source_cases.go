@@ -31,6 +31,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -110,6 +111,7 @@ type casesDataSource struct {
 type casesDataSourceModel struct {
 	Active                types.Bool   `tfsdk:"active"`
 	Search                types.String `tfsdk:"search"`
+	CustomerCompany       types.String `tfsdk:"customer_company"`
 	PageSize              types.Int64  `tfsdk:"page_size"`
 	IncludeContactDetails types.Bool   `tfsdk:"include_contact_details"`
 	Complete              types.Bool   `tfsdk:"complete"`
@@ -135,7 +137,24 @@ func (d *casesDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, 
 					"single call that returns both**, so retrieving every case requires two " +
 					"`kala_cases` blocks, one per value.",
 			},
-			"search":    schema.StringAttribute{Optional: true, MarkdownDescription: "Free-text filter applied upstream."},
+			"search": schema.StringAttribute{
+				Optional:            true,
+				MarkdownDescription: "Free-text filter applied upstream. Matches case names and customer fields.",
+			},
+			"customer_company": schema.StringAttribute{
+				Optional: true,
+				MarkdownDescription: "Return only cases whose customer company matches exactly, " +
+					"ignoring case.\n\n" +
+					"**Applied client-side.** The case list carries the customer's company as text " +
+					"but no customer id, so this is string matching rather than a join: it will not " +
+					"follow a renamed company, and two customers sharing a company name are " +
+					"indistinguishable here. Use `kala_customer` when you need the id.\n\n" +
+					"Deliberately not pushed into `search`, which is a broad text match over case " +
+					"names as well as customer fields, so narrowing with it could drop cases that " +
+					"genuinely match.\n\n" +
+					"Set to `\"\"` to select cases with **no** customer, such as internal projects. " +
+					"Leaving it unset applies no filter.",
+			},
 			"page_size": schema.Int64Attribute{Optional: true, MarkdownDescription: "Records fetched per request while paginating."},
 			"include_contact_details": schema.BoolAttribute{
 				Optional:            true,
@@ -195,8 +214,24 @@ func (d *casesDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 		return
 	}
 
+	// Client-side, over records already received. Null means "no filter"; an
+	// explicit "" means "cases with no customer" -- a real distinction that
+	// ValueString() alone would collapse (TF1.5).
+	cases := scan.Cases
+	if !config.CustomerCompany.IsNull() && !config.CustomerCompany.IsUnknown() {
+		want := strings.ToLower(config.CustomerCompany.ValueString())
+		filtered := make([]client.Case, 0, len(cases))
+		for _, c := range cases {
+			if strings.ToLower(c.CustomerCompany) == want {
+				filtered = append(filtered, c)
+			}
+		}
+		cases = filtered
+	}
+
 	tflog.Debug(ctx, "read Kala cases", map[string]any{
-		"count": len(scan.Cases), "total": scan.Total, "archived": archived, "complete": scan.Complete(),
+		"received": len(scan.Cases), "returned": len(cases),
+		"total": scan.Total, "archived": archived, "complete": scan.Complete(),
 	})
 
 	if !scan.Complete() {
@@ -211,11 +246,14 @@ func (d *casesDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 	state := casesDataSourceModel{
 		Active:                config.Active,
 		Search:                config.Search,
+		CustomerCompany:       config.CustomerCompany,
 		PageSize:              config.PageSize,
 		IncludeContactDetails: config.IncludeContactDetails,
 		Complete:              types.BoolValue(scan.Complete()),
 		Total:                 types.Int64Value(int64(scan.Total)),
-		Cases:                 buildCasesState(scan.Cases, config.IncludeContactDetails.ValueBool()),
+		// Complete and Total describe the READ, not the filtered list -- the same
+		// invariant the task assignee filter holds.
+		Cases: buildCasesState(cases, config.IncludeContactDetails.ValueBool()),
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }

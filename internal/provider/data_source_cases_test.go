@@ -418,3 +418,106 @@ func TestCaseRead_ExposesContactsWhenRequested(t *testing.T) {
 		t.Errorf("customer_email = %q", state.CustomerEmail.ValueString())
 	}
 }
+
+// --- customer_company filter ---------------------------------------------
+
+func casesWithCustomers() []client.Case {
+	return []client.Case{
+		{ID: 1, Number: "KA-1", Name: "Roof works", CustomerCompany: "Bag End Ltd", CustomerName: "Frodo Baggins"},
+		{ID: 2, Number: "KA-2", Name: "Internal", CustomerCompany: "", CustomerName: ""},
+		{ID: 3, Number: "KA-3", Name: "Fence", CustomerCompany: "Gamgee Gardening", CustomerName: "Samwise Gamgee"},
+		{ID: 4, Number: "KA-4", Name: "Gutter", CustomerCompany: "Bag End Ltd", CustomerName: "Frodo Baggins"},
+	}
+}
+
+func TestCasesRead_CustomerCompanyFiltersClientSide(t *testing.T) {
+	f := &caseFake{scan: client.CaseScan{Cases: casesWithCustomers(), Total: 4, Fetched: 4}}
+	resp := readCases(t, f, map[string]tftypes.Value{
+		"customer_company": tftypes.NewValue(tftypes.String, "Bag End Ltd"),
+	})
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected error: %v", resp.Diagnostics.Errors())
+	}
+	var state casesDataSourceModel
+	resp.State.Get(context.Background(), &state)
+	if len(state.Cases) != 2 {
+		t.Fatalf("got %d cases, want 2", len(state.Cases))
+	}
+	for _, c := range state.Cases {
+		if c.CustomerCompany.ValueString() != "Bag End Ltd" {
+			t.Errorf("case %s leaked through the filter", c.Number.ValueString())
+		}
+	}
+}
+
+// Matching is case-insensitive: `search` upstream is, and a user copying a
+// company name out of kala_customers should not have to match capitalisation.
+func TestCasesRead_CustomerCompanyIsCaseInsensitive(t *testing.T) {
+	f := &caseFake{scan: client.CaseScan{Cases: casesWithCustomers(), Total: 4, Fetched: 4}}
+	resp := readCases(t, f, map[string]tftypes.Value{
+		"customer_company": tftypes.NewValue(tftypes.String, "bag end ltd"),
+	})
+	var state casesDataSourceModel
+	resp.State.Get(context.Background(), &state)
+	if len(state.Cases) != 2 {
+		t.Fatalf("got %d cases, want 2 -- matching must be case-insensitive", len(state.Cases))
+	}
+}
+
+// Exact match, not substring: "Bag End" must not match "Bag End Ltd", or a
+// filter would silently widen as customers are added.
+func TestCasesRead_CustomerCompanyIsExactNotSubstring(t *testing.T) {
+	f := &caseFake{scan: client.CaseScan{Cases: casesWithCustomers(), Total: 4, Fetched: 4}}
+	resp := readCases(t, f, map[string]tftypes.Value{
+		"customer_company": tftypes.NewValue(tftypes.String, "Bag End"),
+	})
+	var state casesDataSourceModel
+	resp.State.Get(context.Background(), &state)
+	if len(state.Cases) != 0 {
+		t.Errorf("got %d cases, want 0 -- the filter is an exact match", len(state.Cases))
+	}
+}
+
+// The same invariant the task assignee filter has: a client-side filter narrows
+// the RESULT, not the READ.
+func TestCasesRead_CustomerCompanyDoesNotMakeCompleteFalse(t *testing.T) {
+	f := &caseFake{scan: client.CaseScan{Cases: casesWithCustomers(), Total: 4, Fetched: 4}}
+	resp := readCases(t, f, map[string]tftypes.Value{
+		"customer_company": tftypes.NewValue(tftypes.String, "Bag End Ltd"),
+	})
+	var state casesDataSourceModel
+	resp.State.Get(context.Background(), &state)
+	if !state.Complete.ValueBool() {
+		t.Error("all 4 of 4 records were received; filtering must not report the read as partial")
+	}
+	if state.Total.ValueInt64() != 4 {
+		t.Errorf("total = %d, want 4 -- total describes the account, not the filtered list",
+			state.Total.ValueInt64())
+	}
+}
+
+// customer_company must NOT be sent upstream. `search` is a broad text match
+// across case name and customer fields whose coverage is unverified, so using
+// it to prefilter could silently drop cases that genuinely match.
+func TestCasesRead_CustomerCompanyIsNotSentUpstream(t *testing.T) {
+	f := &caseFake{scan: client.CaseScan{Cases: casesWithCustomers(), Total: 4, Fetched: 4}}
+	readCases(t, f, map[string]tftypes.Value{
+		"customer_company": tftypes.NewValue(tftypes.String, "Bag End Ltd"),
+	})
+	if f.gotQuery.Search != "" {
+		t.Errorf("search = %q; customer_company must not be pushed into the upstream text search",
+			f.gotQuery.Search)
+	}
+}
+
+func TestCasesRead_CustomerCompanyMatchesEmptyString(t *testing.T) {
+	f := &caseFake{scan: client.CaseScan{Cases: casesWithCustomers(), Total: 4, Fetched: 4}}
+	resp := readCases(t, f, map[string]tftypes.Value{
+		"customer_company": tftypes.NewValue(tftypes.String, ""),
+	})
+	var state casesDataSourceModel
+	resp.State.Get(context.Background(), &state)
+	if len(state.Cases) != 1 || state.Cases[0].Number.ValueString() != "KA-2" {
+		t.Errorf("an explicit empty string must select the internal project with no customer, got %d", len(state.Cases))
+	}
+}

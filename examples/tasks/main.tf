@@ -57,6 +57,32 @@ data "kala_tasks" "per_case" {
   only_unfinished = true
 }
 
+# ---------------------------------------------------------------------------
+# All of one customer's tasks
+# ---------------------------------------------------------------------------
+#
+# Kala has no customer -> tasks path. The case list carries the customer's
+# company as text but no customer id, so the join is by company name, filtered
+# client-side, and then fanned out per case.
+
+data "kala_customer" "target" {
+  cvr = "12345678"
+}
+
+data "kala_cases" "for_customer" {
+  customer_company = data.kala_customer.target.company
+}
+
+data "kala_tasks" "for_customer" {
+  for_each = { for c in data.kala_cases.for_customer.cases : tostring(c.id) => c }
+
+  case_id = each.value.id
+}
+
+output "customer_task_counts" {
+  value = { for id, d in data.kala_tasks.for_customer : id => length(d.tasks) }
+}
+
 output "open_tasks_per_case" {
   value = {
     for id, d in data.kala_tasks.per_case :
