@@ -1,8 +1,8 @@
 // Story: Task data sources (kala_tasks, kala_task)
 //
 // A Kala "task" is a CHECKLIST ITEM. It carries completion, hours, and billing
-// data, which draft/product.md excludes from managed state; reading it here is
-// a deliberate, recorded narrowing of that Non-Goal.
+// data, which is deliberately excluded from managed state; reading it here is
+// a deliberate, recorded narrowing of that scope.
 //
 // Input:  Terraform config -- case_id is REQUIRED on both, plus filters on the
 //         list and exactly one of id/name on the singular one.

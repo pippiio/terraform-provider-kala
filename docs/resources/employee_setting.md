@@ -4,14 +4,14 @@ page_title: "kala_employee_setting Resource - kala"
 subcategory: ""
 description: |-
   Manages a single setting on an existing Kala employee.
-  **Kala cannot delete settings.** `terraform destroy` removes this resource from state and warns; the setting remains on the employee. See ADR-001.
+  **Kala cannot delete settings.** `terraform destroy` removes this resource from state and warns; the setting remains on the employee.
 ---
 
 # kala_employee_setting (Resource)
 
 Manages a single setting on an existing Kala employee.
 
-> **Kala cannot delete settings.** `terraform destroy` removes this resource from state and warns; the setting remains on the employee. See ADR-001.
+> **Kala cannot delete settings.** `terraform destroy` removes this resource from state and warns; the setting remains on the employee.
 
 
 

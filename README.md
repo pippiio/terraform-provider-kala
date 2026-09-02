@@ -228,7 +228,7 @@ backend or a CI artifact distributes them to everyone with access to it.
 
 Kala's "tasks" are checklist items, which carry completion timestamps and
 registered hours. Reading them is supported; *managing* them as Terraform
-resources is not, and remains out of scope — see `draft/product.md`.
+resources is not, and remains out of scope.
 
 ## Limitations
 

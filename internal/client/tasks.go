@@ -1,8 +1,8 @@
 // Story: Task read path (internal app API)
 //
 // A Kala "task" is a CHECKLIST ITEM. It carries completion, hours, and billing
-// data, which draft/product.md excludes from managed state; reading it via a
-// data source is a deliberate, recorded narrowing of that Non-Goal.
+// data, which is deliberately excluded from managed state; reading it via a
+// data source is a deliberate, recorded narrowing of that scope.
 //
 // Input:  ctx, TaskQuery{CaseID (REQUIRED), Search, NameContains,
 //         OnlyUnfinished, AssigneeWorkerNr, PageSize, MaxPages}

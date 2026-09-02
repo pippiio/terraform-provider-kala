@@ -5,7 +5,7 @@ subcategory: ""
 description: |-
   Manages an employee in Kala.
   Creation uses the internal app API's SignUp endpoint, so username and password must be configured on the provider.
-  **Destroy deactivates rather than deletes.** Kala has no delete endpoint for employees. `terraform destroy` sets the employee inactive and warns; their record, settings, and history remain. See ADR-002.
+  **Destroy deactivates rather than deletes.** Kala has no delete endpoint for employees. `terraform destroy` sets the employee inactive and warns; their record, settings, and history remain.
   **An existing `employee_number` is adopted, not rejected.** If the number is already in use, the resource takes ownership of that employee and reactivates them if they were inactive.
 ---
 
@@ -15,7 +15,7 @@ Manages an employee in Kala.
 
 Creation uses the internal app API's `SignUp` endpoint, so `username` and `password` must be configured on the provider.
 
-> **Destroy deactivates rather than deletes.** Kala has no delete endpoint for employees. `terraform destroy` sets the employee inactive and warns; their record, settings, and history remain. See ADR-002.
+> **Destroy deactivates rather than deletes.** Kala has no delete endpoint for employees. `terraform destroy` sets the employee inactive and warns; their record, settings, and history remain.
 
 > **An existing `employee_number` is adopted, not rejected.** If the number is already in use, the resource takes ownership of that employee and reactivates them if they were inactive.
 
