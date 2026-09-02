@@ -290,10 +290,12 @@ func (d *customerDataSource) Schema(_ context.Context, _ datasource.SchemaReques
 		MarkdownDescription: "Expose email, phone, address, zip, city, and ean. Off by default.",
 	}
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Looks up one customer by id.\n\n" +
-			"Kala has **no single-customer endpoint**, so this reads the customer list and selects " +
-			"from it. If the account is larger than the read can cover, the lookup reports that the " +
-			"read was incomplete rather than claiming the customer does not exist.",
+		MarkdownDescription: "Looks up a single customer by `id`, `number`, or `cvr`. Set exactly one.\n\n" +
+			"Kala has **no single-customer endpoint**. `number` and `cvr` are narrowed upstream " +
+			"before matching, so they do not read the whole account; `id` cannot be, because Kala's " +
+			"query parameter searches text.\n\n" +
+			"If the account is larger than the read can cover, the lookup reports that the read was " +
+			"incomplete rather than claiming the customer does not exist.",
 		Attributes: attrs,
 	}
 }
