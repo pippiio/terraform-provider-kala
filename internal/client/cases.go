@@ -212,6 +212,10 @@ type listCasesBody struct {
 // framework's "no value", which must map to nil rather than year 1.
 const dotNetZeroMillis = -62135596800000
 
+// firstCasePage is the page number GetAllJobsSimplePaged counts from. It is 1,
+// not 0, and it is the only paged endpoint on this API that behaves that way.
+const firstCasePage = 1
+
 // parseDotNetDate converts ASP.NET's /Date(milliseconds)/ wire format.
 //
 // Returns nil for null, empty, and the .NET zero date, which all mean "unset"
@@ -255,13 +259,27 @@ func (c *internalAPI) ListCases(ctx context.Context, q CaseQuery) (CaseScan, err
 
 	scan := CaseScan{Cases: make([]Case, 0, pageSize)}
 
-	for page := 0; page < maxPages; page++ {
+	// This endpoint is ONE-indexed, unlike GetCustomersPaged2 and
+	// GetChecklistItemsPaged which both start at 0. Page 0 here returns HTTP 500
+	// with "Count must have a non-negative value" -- the server computes a
+	// negative offset. Verified against the live tenant 2026-09-02, after a
+	// terraform apply failed on exactly this.
+	//
+	// Page origin is therefore per-endpoint knowledge. Do not unify it.
+	for page := firstCasePage; page < firstCasePage+maxPages; page++ {
 		body, err := json.Marshal(listCasesBody{
 			FinishedJobs: false,
 			ArchivedJobs: q.Archived,
-			Page:         page,
-			Search:       q.Search,
-			Origin:       "Other",
+
+			// Must be true. Sending false returns an EMPTY result set -- it is
+			// not an "include" flag, and Go's zero value is the wrong default.
+			// Verified against the live tenant 2026-09-02, after an apply read
+			// zero cases from an account holding two.
+			UnassignedTasks: true,
+
+			Page:   page,
+			Search: q.Search,
+			Origin: "Other", // observed to have no effect; sent as the UI does
 		})
 		if err != nil {
 			return CaseScan{}, fmt.Errorf("kala: building case list request: %w", err)

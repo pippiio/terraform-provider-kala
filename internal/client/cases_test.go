@@ -24,6 +24,7 @@ type caseMock struct {
 	lastBody     map[string]any
 	detailStatus int   // when non-zero, GetJobDetailsAdvanced returns this
 	detail500s   int32 // number of 500s to serve before succeeding
+	pages        []any // page numbers seen by the list endpoint
 	served500    int32
 	detailHits   int32
 }
@@ -44,6 +45,21 @@ func newCaseMock(t *testing.T) *caseMock {
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			m.lastBody = body
+			m.pages = append(m.pages, body["page"])
+			// This endpoint is 1-INDEXED and answers page 0 with a 500
+			// ("Count must have a non-negative value"). Reproduced here
+			// because a mock that tolerates page 0 let the bug ship.
+			if p, ok := body["page"].(float64); ok && p < 1 {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			// unassignedTasks=false returns an EMPTY set upstream -- it is not
+			// an inclusion flag and Go's zero value is the wrong default.
+			// Reproduced here because a permissive mock let this ship.
+			if u, ok := body["unassignedTasks"].(bool); !ok || !u {
+				_ = json.NewEncoder(w).Encode(map[string]any{"cases": []any{}, "totalCount": 0})
+				return
+			}
 			set := m.active
 			if arch, _ := body["archivedJobs"].(bool); arch {
 				set = m.archived
@@ -488,5 +504,50 @@ func TestGetCase_DecodesFinancialFields(t *testing.T) {
 	}
 	if d.Sales != 4000 || d.Result != 2800 {
 		t.Errorf("Sales/Result = %d/%d, want 4000/2800", d.Sales, d.Result)
+	}
+}
+
+// GetAllJobsSimplePaged is 1-INDEXED. Page 0 returns HTTP 500 with
+// "Count must have a non-negative value" -- verified against the live tenant
+// 2026-09-02, after a terraform apply failed on exactly this.
+//
+// GetCustomersPaged2 and GetChecklistItemsPaged are 0-indexed. The three
+// endpoints of one API disagree, so page origin is per-endpoint knowledge and
+// must not be shared.
+func TestListCases_PaginationIsOneIndexed(t *testing.T) {
+	m := newCaseMock(t)
+	m.active = []map[string]any{caseRec(1, "KA-1", "Roof works", false)}
+
+	scan, err := m.client().ListCases(t.Context(), CaseQuery{})
+	if err != nil {
+		t.Fatalf("ListCases: %v -- page 0 is rejected by this endpoint", err)
+	}
+	if len(scan.Cases) != 1 {
+		t.Fatalf("got %d cases, want 1", len(scan.Cases))
+	}
+	if len(m.pages) == 0 {
+		t.Fatal("no request reached the list endpoint")
+	}
+	if first, ok := m.pages[0].(float64); !ok || first != 1 {
+		t.Errorf("first request sent page=%v, want 1", m.pages[0])
+	}
+}
+
+// unassignedTasks must be sent true. Sending false returns zero cases against
+// the live tenant -- verified 2026-09-02 after a terraform apply read an empty
+// list from an account holding two cases.
+func TestListCases_SendsUnassignedTasksTrue(t *testing.T) {
+	m := newCaseMock(t)
+	m.active = []map[string]any{caseRec(1, "KA-1", "Roof works", false)}
+
+	scan, err := m.client().ListCases(t.Context(), CaseQuery{})
+	if err != nil {
+		t.Fatalf("ListCases: %v", err)
+	}
+	if len(scan.Cases) != 1 {
+		t.Fatalf("got %d cases, want 1 -- unassignedTasks=false empties the result", len(scan.Cases))
+	}
+	if got := m.lastBody["unassignedTasks"]; got != true {
+		t.Errorf("unassignedTasks sent as %v, want true", got)
 	}
 }
