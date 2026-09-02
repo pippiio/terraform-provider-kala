@@ -230,6 +230,95 @@ Kala's "tasks" are checklist items, which carry completion timestamps and
 registered hours. Reading them is supported; *managing* them as Terraform
 resources is not, and remains out of scope — see `draft/product.md`.
 
+## Limitations
+
+These are properties of Kala's API, not of the implementation. They are listed
+because each one is a way to get a wrong answer if you assume otherwise.
+
+### Absence is not always provable
+
+`kala_customer` and `kala_task` have **no upstream by-id endpoint**. Both read a
+list and select from it. When the record is missing from a read that hit its
+pagination cap, they report that the lookup *could not be completed* rather than
+that the record does not exist — absence from a partial read proves nothing.
+Raise `page_size` if you see that diagnostic; do not read it as "not found".
+
+Every list data source exposes `complete` for the same reason. A list with
+`complete = false` is a subset.
+
+### `customer_company` matches text; it is not a join
+
+The case list carries the customer's company name but **no customer id**, so
+`kala_cases.customer_company` compares strings. It will not follow a renamed
+company, and two customers sharing a company name are indistinguishable through
+it. A real join would need a per-case detail fetch. Use `kala_customer` when you
+need an id.
+
+It is also deliberately not pushed into the upstream `search` parameter, which
+matches case *names* as well as customer fields — narrowing with it could drop
+cases that genuinely match.
+
+### Active and archived cases are disjoint sets
+
+`kala_cases.active` selects **which set** to return, not how to narrow one. Kala
+offers no call returning both, so reading every case takes two data source blocks
+and a `concat`. A configuration that reads only the default set is silently
+blind to archived cases.
+
+### Tasks are per-case by construction
+
+`kala_tasks.case_id` is required: Kala addresses checklist items by case and has
+no account-wide task endpoint. Reading across cases is a `for_each` over
+`kala_cases` — deliberately yours to write, so the cost of one request per case
+is visible rather than hidden inside the provider.
+
+Assignee filtering is applied **client-side**, because Kala accepts no assignee
+parameter. It narrows the result without reducing what was read, which is why
+`complete` still describes the read. Only the responsible worker
+(`respWorkerNr`) is matched; the `workersAssigned` collection has never been
+observed populated, so its shape is unknown and it is not exposed.
+
+### Identifiers do not interchange
+
+| Field | Type | Note |
+|-------|------|------|
+| `kala_case.number` | string | e.g. `KA-1`. How a case is **addressed** |
+| `kala_case.id` | number | How a case is **referenced** by `kala_tasks.case_id` |
+| `kala_customer.number` | string | A **string** here; webapiv2 spells the same field as an integer, and the two are not known to hold the same value |
+
+`economy_case_number` mirrors `number` on every case observed, including
+Kala-native internal projects that have no e-conomic counterpart. Do not treat it
+as evidence of an e-conomic link.
+
+### Fields that are absent, not empty
+
+The case list returns 27 fields; the detail endpoint returns 69. Anything past
+identity and customer name must come from `kala_case`.
+
+`is_finished` is exposed only from the detail endpoint, where it means
+completion. The list endpoint has a field of the same name that tracks
+*archived-ness* and disagrees with it, so it is not exposed at all.
+
+`status_name` on tasks is **not translated** — the values come from the
+company-wide `kanban_options` setting and appear in whatever language it uses.
+
+Several list fields (`status`, `color`, `start_date`, `end_date`) were null
+throughout the account this provider was developed against, so their types were
+never confirmed and they are not exposed.
+
+### Operational
+
+- All six customer, case, and task data sources require `KALA_USERNAME` and
+  `KALA_PASSWORD`. Only `kala_employees` works with `api_key` alone.
+- They read Kala's **internal, undocumented, unversioned** app API, because
+  `webapiv2` does not expose these entities usefully. It may change without
+  notice.
+- Multi-company behaviour is untested: the `kacompany` header is sent, but
+  development had access to a single-company account only.
+- Kala documents no rate limits. Requests are bounded, retried with backoff on
+  5xx, and never retried on 4xx, but a large `for_each` over cases will still
+  generate one request per case.
+
 ## Development
 
 ```bash

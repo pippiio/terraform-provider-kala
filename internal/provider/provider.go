@@ -54,7 +54,9 @@ func (p *kalaProvider) Metadata(_ context.Context, _ provider.MetadataRequest, r
 
 func (p *kalaProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Manages configuration in [Kala](https://kala.app), a Danish work-management platform for construction and service trades.",
+		MarkdownDescription: "Manages configuration in [Kala](https://kala.app), a Danish " +
+			"work-management platform for construction and service trades. Employees and their " +
+			"settings are managed as resources; customers, cases, and tasks are read-only.",
 		Attributes: map[string]schema.Attribute{
 			"endpoint": schema.StringAttribute{
 				Optional:            true,
