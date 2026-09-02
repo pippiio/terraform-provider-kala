@@ -122,14 +122,191 @@ type TaskScan struct {
 // Complete reports whether the read received everything upstream claimed.
 func (s TaskScan) Complete() bool { return s.Fetched >= s.Total }
 
-// ListTasks reads the checklist items of one case.
-func (c *internalAPI) ListTasks(ctx context.Context, q TaskQuery) (TaskScan, error) {
-	return TaskScan{}, nil // stub: RED
+// wireTask is the checklist-item record. Note Id is capitalised while every
+// sibling field is camelCase -- upstream inconsistency, not a typo here.
+type wireTask struct {
+	ID          int64  `json:"Id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	CaseID      int64  `json:"caseId"`
+	CaseNr      string `json:"caseNr"`
+	ChecklistID int64  `json:"checklistId"`
+	StatusName  string `json:"statusName"`
+
+	RespWorkerNr *int64 `json:"respWorkerNr"`
+	AssignedToMe bool   `json:"assignedToMe"`
+	CreatedBy    string `json:"createdBy"`
+
+	Deadline     string `json:"deadline"`
+	TimeAdded    string `json:"timeAdded"`
+	TimeFinished string `json:"timeFinished"`
+
+	IsFinished       bool   `json:"isFinished"`
+	WorkerFinishedBy string `json:"workerFinishedBy"`
+
+	RegisteredHoursTotal int    `json:"registeredHoursTotal"`
+	BilledHours          int    `json:"billedHours"`
+	InvoiceMode          string `json:"invoiceMode"`
+	PriceFixed           *int   `json:"priceFixed"`
+
+	NoteRequired  bool `json:"noteRequired"`
+	ImageRequired bool `json:"imageRequired"`
+	HasImage      bool `json:"hasImage"`
 }
 
-var (
-	_ = bytes.TrimSpace
-	_ = json.Unmarshal
-	_ = fmt.Errorf
-	_ = http.MethodPost
-)
+// wireTasksPage is the paged envelope.
+//
+// TotalCount is a POINTER on purpose. An unknown caseId returns HTTP 200 with
+// items:[] and totalCount absent, whereas a real case with no tasks returns
+// totalCount:0. A plain int would collapse the two into "empty and complete".
+type wireTasksPage struct {
+	Items                    []wireTask `json:"items"`
+	TotalCount               *int       `json:"totalCount"`
+	CaseTotalCount           int        `json:"caseTotalCount"`
+	CaseFinishedCount        int        `json:"caseFinishedCount"`
+	CaseTotalNormTime        int        `json:"caseTotalNormTime"`
+	CaseTotalRegisteredHours int        `json:"caseTotalRegisteredHours"`
+}
+
+// listTasksBody is the request body. There is no assignee parameter: upstream
+// offers none, so assignee filtering happens client-side after the read.
+type listTasksBody struct {
+	CaseID         int64   `json:"caseId"`
+	Page           int     `json:"page"`
+	PageSize       int     `json:"pageSize"`
+	Search         string  `json:"search"`
+	OnlyUnfinished bool    `json:"onlyUnfinished"`
+	NameContains   *string `json:"nameContains"`
+	Sort           *string `json:"sort"`
+}
+
+func (w wireTask) toDomain() (Task, error) {
+	t := Task{
+		ID: w.ID, Name: w.Name, Description: w.Description,
+		CaseID: w.CaseID, CaseNumber: w.CaseNr, ChecklistID: w.ChecklistID,
+		StatusName:       w.StatusName,
+		AssigneeWorkerNr: w.RespWorkerNr,
+		AssignedToMe:     w.AssignedToMe,
+		CreatedBy:        w.CreatedBy,
+		IsFinished:       w.IsFinished,
+		FinishedBy:       w.WorkerFinishedBy,
+
+		RegisteredHoursTotal: w.RegisteredHoursTotal,
+		BilledHours:          w.BilledHours,
+		InvoiceMode:          w.InvoiceMode,
+		PriceFixed:           w.PriceFixed,
+
+		NoteRequired:  w.NoteRequired,
+		ImageRequired: w.ImageRequired,
+		HasImage:      w.HasImage,
+	}
+
+	for _, f := range []struct {
+		raw  string
+		dst  **time.Time
+		name string
+	}{
+		{w.Deadline, &t.Deadline, "deadline"},
+		{w.TimeAdded, &t.TimeAdded, "timeAdded"},
+		{w.TimeFinished, &t.TimeFinished, "timeFinished"},
+	} {
+		parsed, err := parseDotNetDate(f.raw)
+		if err != nil {
+			return Task{}, fmt.Errorf("task %d %s: %w", w.ID, f.name, err)
+		}
+		*f.dst = parsed
+	}
+	return t, nil
+}
+
+// ListTasks reads the checklist items of one case.
+//
+// q.CaseID is required: it addresses the endpoint rather than filtering it.
+// There is deliberately no account-wide task read -- that would be one request
+// per case, an N+1 fan-out against an API with undocumented rate limits.
+func (c *internalAPI) ListTasks(ctx context.Context, q TaskQuery) (TaskScan, error) {
+	if q.CaseID <= 0 {
+		return TaskScan{}, fmt.Errorf(
+			"kala: a case id is required to read tasks (upstream addresses checklist items by caseId; there is no account-wide task read)")
+	}
+
+	pageSize := q.PageSize
+	if pageSize <= 0 {
+		pageSize = defaultPageSize
+	}
+	maxPages := q.MaxPages
+	if maxPages <= 0 {
+		maxPages = defaultMaxPages
+	}
+
+	var nameContains *string
+	if q.NameContains != "" {
+		nameContains = &q.NameContains
+	}
+
+	scan := TaskScan{Tasks: make([]Task, 0, pageSize)}
+
+	for page := 0; page < maxPages; page++ {
+		body, err := json.Marshal(listTasksBody{
+			CaseID:         q.CaseID,
+			Page:           page,
+			PageSize:       pageSize,
+			Search:         q.Search,
+			OnlyUnfinished: q.OnlyUnfinished,
+			NameContains:   nameContains,
+		})
+		if err != nil {
+			return TaskScan{}, fmt.Errorf("kala: building task list request: %w", err)
+		}
+
+		raw, err := c.authedRequest(
+			ctx, http.MethodPost, "/Case/GetChecklistItemsPaged/", body, contentTypeHeader,
+		)
+		if err != nil {
+			return TaskScan{}, err
+		}
+		scan.Pages++
+
+		if len(bytes.TrimSpace(raw)) == 0 {
+			return TaskScan{}, fmt.Errorf("%w: no case with id %d", ErrNotFound, q.CaseID)
+		}
+
+		var envelope wireTasksPage
+		if err := json.Unmarshal(raw, &envelope); err != nil {
+			return TaskScan{}, fmt.Errorf("%w: tasks response: %v", ErrDecode, err)
+		}
+
+		// An absent totalCount is upstream's only signal that the case does not
+		// exist. A real but empty case sends totalCount:0.
+		if envelope.TotalCount == nil {
+			return TaskScan{}, fmt.Errorf("%w: no case with id %d", ErrNotFound, q.CaseID)
+		}
+
+		scan.Total = *envelope.TotalCount
+		scan.CaseTotal = envelope.CaseTotalCount
+		scan.CaseFinished = envelope.CaseFinishedCount
+
+		// Fetched counts records RECEIVED. The client-side filter below narrows
+		// what the caller asked for, not what the read covered.
+		scan.Fetched += len(envelope.Items)
+
+		for _, wt := range envelope.Items {
+			task, err := wt.toDomain()
+			if err != nil {
+				return TaskScan{}, err
+			}
+			if q.AssigneeWorkerNr != nil {
+				if task.AssigneeWorkerNr == nil || *task.AssigneeWorkerNr != *q.AssigneeWorkerNr {
+					continue
+				}
+			}
+			scan.Tasks = append(scan.Tasks, task)
+		}
+
+		if len(envelope.Items) == 0 || scan.Fetched >= scan.Total {
+			return scan, nil
+		}
+	}
+
+	return scan, nil
+}
