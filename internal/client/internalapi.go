@@ -148,6 +148,9 @@ type InternalClient interface {
 
 	// GetCase reads one case by its string case number.
 	GetCase(ctx context.Context, caseNumber string) (CaseDetail, error)
+
+	// ListTasks reads the checklist items of one case. q.CaseID is required.
+	ListTasks(ctx context.Context, q TaskQuery) (TaskScan, error)
 }
 
 // WorkerInfo is the detailed worker record from /api/WorkerInfo.
