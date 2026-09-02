@@ -2,9 +2,14 @@ package provider
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"github.com/techchapter/terraform-provider-kala/internal/client"
 )
@@ -209,5 +214,228 @@ func TestCustomersDataSource_ConfigureIgnoresNilProviderData(t *testing.T) {
 		if resp.Diagnostics.HasError() {
 			t.Error("nil provider data is the normal pre-configure call and must be ignored")
 		}
+	}
+}
+
+func TestProvider_RegistersCustomerDataSources(t *testing.T) {
+	want := map[string]bool{"kala_customers": false, "kala_customer": false}
+	for _, mk := range (&kalaProvider{}).DataSources(context.Background()) {
+		var resp datasource.MetadataResponse
+		mk().Metadata(context.Background(), datasource.MetadataRequest{ProviderTypeName: "kala"}, &resp)
+		if _, tracked := want[resp.TypeName]; tracked {
+			want[resp.TypeName] = true
+		}
+	}
+	for name, registered := range want {
+		if !registered {
+			t.Errorf("%s is not registered on the provider", name)
+		}
+	}
+}
+
+// The list data source must warn, not fail silently, when the read was capped.
+func TestCustomersDataSource_ReadWithoutClientIsAClearError(t *testing.T) {
+	var resp datasource.ReadResponse
+	(&customersDataSource{}).Read(context.Background(), datasource.ReadRequest{}, &resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("reading without a configured internal client must error")
+	}
+	if !strings.Contains(resp.Diagnostics.Errors()[0].Detail(), "KALA_USERNAME") {
+		t.Errorf("the diagnostic must name the missing credentials, got: %s",
+			resp.Diagnostics.Errors()[0].Detail())
+	}
+}
+
+func TestCustomerDataSource_ReadWithoutClientIsAClearError(t *testing.T) {
+	var resp datasource.ReadResponse
+	(&customerDataSource{}).Read(context.Background(), datasource.ReadRequest{}, &resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("reading without a configured internal client must error")
+	}
+	if !strings.Contains(resp.Diagnostics.Errors()[0].Detail(), "KALA_USERNAME") {
+		t.Errorf("the diagnostic must name the missing credentials, got: %s",
+			resp.Diagnostics.Errors()[0].Detail())
+	}
+}
+
+// --- Read, exercised through the framework -------------------------------
+
+// customerFake is an InternalClient double for the customer read path.
+type customerFake struct {
+	client.InternalClient
+	scan client.CustomerScan
+	err  error
+	got  client.CustomerQuery
+}
+
+func (f *customerFake) ListCustomers(_ context.Context, q client.CustomerQuery) (client.CustomerScan, error) {
+	f.got = q
+	return f.scan, f.err
+}
+
+// dsConfig builds a Config carrying only the attributes a test sets; the rest
+// are null, which is what Terraform supplies for unset optional attributes.
+func dsConfig(t *testing.T, sch schema.Schema, vals map[string]tftypes.Value) tfsdk.Config {
+	t.Helper()
+	typ := sch.Type().TerraformType(context.Background())
+	obj, ok := typ.(tftypes.Object)
+	if !ok {
+		t.Fatalf("schema type is %T, want tftypes.Object", typ)
+	}
+	full := make(map[string]tftypes.Value, len(obj.AttributeTypes))
+	for name, at := range obj.AttributeTypes {
+		if v, set := vals[name]; set {
+			full[name] = v
+			continue
+		}
+		full[name] = tftypes.NewValue(at, nil)
+	}
+	return tfsdk.Config{Schema: sch, Raw: tftypes.NewValue(obj, full)}
+}
+
+func customersSchema(t *testing.T) schema.Schema {
+	t.Helper()
+	var resp datasource.SchemaResponse
+	NewCustomersDataSource().Schema(context.Background(), datasource.SchemaRequest{}, &resp)
+	return resp.Schema
+}
+
+func customerSchema(t *testing.T) schema.Schema {
+	t.Helper()
+	var resp datasource.SchemaResponse
+	NewCustomerDataSource().Schema(context.Background(), datasource.SchemaRequest{}, &resp)
+	return resp.Schema
+}
+
+func readCustomers(t *testing.T, f *customerFake, vals map[string]tftypes.Value) *datasource.ReadResponse {
+	t.Helper()
+	sch := customersSchema(t)
+	ds := &customersDataSource{client: f}
+	resp := &datasource.ReadResponse{State: tfsdk.State{Schema: sch}}
+	ds.Read(context.Background(), datasource.ReadRequest{Config: dsConfig(t, sch, vals)}, resp)
+	return resp
+}
+
+func readCustomer(t *testing.T, f *customerFake, vals map[string]tftypes.Value) *datasource.ReadResponse {
+	t.Helper()
+	sch := customerSchema(t)
+	ds := &customerDataSource{client: f}
+	resp := &datasource.ReadResponse{State: tfsdk.State{Schema: sch}}
+	ds.Read(context.Background(), datasource.ReadRequest{Config: dsConfig(t, sch, vals)}, resp)
+	return resp
+}
+
+func TestCustomersRead_PopulatesStateAndForwardsSearch(t *testing.T) {
+	f := &customerFake{scan: client.CustomerScan{
+		Customers: sampleCustomers(), Total: 2, Fetched: 2, Pages: 1,
+	}}
+	resp := readCustomers(t, f, map[string]tftypes.Value{
+		"search": tftypes.NewValue(tftypes.String, "baggins"),
+	})
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected error: %v", resp.Diagnostics.Errors())
+	}
+	if f.got.Search != "baggins" {
+		t.Errorf("search forwarded as %q, want baggins", f.got.Search)
+	}
+	var state customersDataSourceModel
+	resp.State.Get(context.Background(), &state)
+	if len(state.Customers) != 2 {
+		t.Fatalf("state holds %d customers, want 2", len(state.Customers))
+	}
+	if !state.Complete.ValueBool() {
+		t.Error("a full read must set complete = true")
+	}
+	if state.Total.ValueInt64() != 2 {
+		t.Errorf("total = %d, want 2", state.Total.ValueInt64())
+	}
+}
+
+// A capped read must warn. Silence would let a caller treat a subset as whole.
+func TestCustomersRead_IncompleteReadWarns(t *testing.T) {
+	f := &customerFake{scan: client.CustomerScan{
+		Customers: sampleCustomers(), Total: 500, Fetched: 2, Pages: 1,
+	}}
+	resp := readCustomers(t, f, nil)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("an incomplete read is a warning, not an error: %v", resp.Diagnostics.Errors())
+	}
+	if resp.Diagnostics.WarningsCount() == 0 {
+		t.Fatal("a capped read must warn that the list is a subset")
+	}
+	var state customersDataSourceModel
+	resp.State.Get(context.Background(), &state)
+	if state.Complete.ValueBool() {
+		t.Error("complete must be false when the cap was reached")
+	}
+}
+
+func TestCustomersRead_SurfacesClientError(t *testing.T) {
+	f := &customerFake{err: errors.New("upstream exploded")}
+	resp := readCustomers(t, f, nil)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a client error must surface as a diagnostic")
+	}
+	if !strings.Contains(resp.Diagnostics.Errors()[0].Detail(), "upstream exploded") {
+		t.Errorf("the upstream message must be preserved, got: %s", resp.Diagnostics.Errors()[0].Detail())
+	}
+}
+
+func TestCustomerRead_FindsAndPopulates(t *testing.T) {
+	f := &customerFake{scan: client.CustomerScan{Customers: sampleCustomers(), Total: 2, Fetched: 2}}
+	resp := readCustomer(t, f, map[string]tftypes.Value{
+		"id": tftypes.NewValue(tftypes.Number, 2),
+	})
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected error: %v", resp.Diagnostics.Errors())
+	}
+	var state customerDataSourceModel
+	resp.State.Get(context.Background(), &state)
+	if state.Number.ValueString() != "K-002" {
+		t.Errorf("number = %q, want K-002", state.Number.ValueString())
+	}
+	if !state.Email.IsNull() {
+		t.Error("contact details must be null without opt-in")
+	}
+}
+
+func TestCustomerRead_NotFoundInACompleteReadSaysNotFound(t *testing.T) {
+	f := &customerFake{scan: client.CustomerScan{Customers: sampleCustomers(), Total: 2, Fetched: 2}}
+	resp := readCustomer(t, f, map[string]tftypes.Value{
+		"id": tftypes.NewValue(tftypes.Number, 99),
+	})
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a missing customer must error")
+	}
+	if !strings.Contains(resp.Diagnostics.Errors()[0].Summary(), "not found") {
+		t.Errorf("summary = %q, want a not-found", resp.Diagnostics.Errors()[0].Summary())
+	}
+}
+
+// The one that matters: a partial read must NOT claim the customer is missing.
+func TestCustomerRead_NotFoundInAPartialReadSaysIncompleteNotMissing(t *testing.T) {
+	f := &customerFake{scan: client.CustomerScan{Customers: sampleCustomers(), Total: 500, Fetched: 2}}
+	resp := readCustomer(t, f, map[string]tftypes.Value{
+		"id": tftypes.NewValue(tftypes.Number, 99),
+	})
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("an inconclusive lookup must error rather than return empty state")
+	}
+	d := resp.Diagnostics.Errors()[0]
+	if strings.Contains(strings.ToLower(d.Summary()), "not found") {
+		t.Errorf("a partial read must not report not-found; got summary %q", d.Summary())
+	}
+	if !strings.Contains(d.Detail(), "500") || !strings.Contains(d.Detail(), "cap") {
+		t.Errorf("the diagnostic must explain the read was capped, got: %s", d.Detail())
+	}
+}
+
+func TestCustomerRead_SurfacesClientError(t *testing.T) {
+	f := &customerFake{err: errors.New("upstream exploded")}
+	resp := readCustomer(t, f, map[string]tftypes.Value{
+		"id": tftypes.NewValue(tftypes.Number, 1),
+	})
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a client error must surface as a diagnostic")
 	}
 }

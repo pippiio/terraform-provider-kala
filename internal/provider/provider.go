@@ -240,6 +240,8 @@ func (p *kalaProvider) Configure(ctx context.Context, req provider.ConfigureRequ
 func (p *kalaProvider) DataSources(_ context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		NewEmployeesDataSource,
+		NewCustomersDataSource,
+		NewCustomerDataSource,
 	}
 }
 
