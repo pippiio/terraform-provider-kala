@@ -142,6 +142,12 @@ type InternalClient interface {
 
 	// ListCustomers reads customers, reporting how much of the account it covered.
 	ListCustomers(ctx context.Context, q CustomerQuery) (CustomerScan, error)
+
+	// ListCases reads one set of cases -- archived or not, per q.Archived.
+	ListCases(ctx context.Context, q CaseQuery) (CaseScan, error)
+
+	// GetCase reads one case by its string case number.
+	GetCase(ctx context.Context, caseNumber string) (CaseDetail, error)
 }
 
 // WorkerInfo is the detailed worker record from /api/WorkerInfo.

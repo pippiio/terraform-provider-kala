@@ -223,6 +223,14 @@ func (f *fakeInternal) ListCustomers(context.Context, client.CustomerQuery) (cli
 	return client.CustomerScan{}, nil
 }
 
+func (f *fakeInternal) ListCases(context.Context, client.CaseQuery) (client.CaseScan, error) {
+	return client.CaseScan{}, nil
+}
+
+func (f *fakeInternal) GetCase(context.Context, string) (client.CaseDetail, error) {
+	return client.CaseDetail{}, nil
+}
+
 var _ client.InternalClient = (*fakeInternal)(nil)
 
 func newEmployeeResource(fi *fakeInternal) *employeeResource {
