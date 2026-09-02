@@ -390,3 +390,108 @@ func TestProvider_RegistersTaskDataSources(t *testing.T) {
 		}
 	}
 }
+
+func TestTasksDataSource_Configure(t *testing.T) {
+	for _, ds := range []datasource.DataSourceWithConfigure{&tasksDataSource{}, &taskDataSource{}} {
+		var nilResp datasource.ConfigureResponse
+		ds.Configure(context.Background(), datasource.ConfigureRequest{}, &nilResp)
+		if nilResp.Diagnostics.HasError() {
+			t.Error("nil provider data must be ignored")
+		}
+		var badResp datasource.ConfigureResponse
+		ds.Configure(context.Background(), datasource.ConfigureRequest{ProviderData: "nonsense"}, &badResp)
+		if !badResp.Diagnostics.HasError() {
+			t.Error("wrong provider data type must produce a diagnostic")
+		}
+		var okResp datasource.ConfigureResponse
+		ds.Configure(context.Background(),
+			datasource.ConfigureRequest{ProviderData: &providerClients{Internal: &taskFake{}}}, &okResp)
+		if okResp.Diagnostics.HasError() {
+			t.Errorf("valid provider data must configure cleanly: %v", okResp.Diagnostics.Errors())
+		}
+	}
+}
+
+func TestTasksDataSource_ReadWithoutClientNamesTheCredentials(t *testing.T) {
+	for name, read := range map[string]func() *datasource.ReadResponse{
+		"kala_tasks": func() *datasource.ReadResponse {
+			r := &datasource.ReadResponse{}
+			(&tasksDataSource{}).Read(context.Background(), datasource.ReadRequest{}, r)
+			return r
+		},
+		"kala_task": func() *datasource.ReadResponse {
+			r := &datasource.ReadResponse{}
+			(&taskDataSource{}).Read(context.Background(), datasource.ReadRequest{}, r)
+			return r
+		},
+	} {
+		resp := read()
+		if !resp.Diagnostics.HasError() {
+			t.Fatalf("%s: reading without a configured client must error", name)
+		}
+		if !strings.Contains(resp.Diagnostics.Errors()[0].Detail(), "KALA_USERNAME") {
+			t.Errorf("%s: the diagnostic must name the missing credentials", name)
+		}
+	}
+}
+
+func TestTaskRead_UnknownCaseSurfacesAsNotFound(t *testing.T) {
+	f := &taskFake{err: client.ErrNotFound}
+	resp := readTask(t, f, map[string]tftypes.Value{
+		"case_id": tftypes.NewValue(tftypes.Number, 999),
+		"id":      tftypes.NewValue(tftypes.Number, 1),
+	})
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("an unknown case must error")
+	}
+	if !strings.Contains(resp.Diagnostics.Errors()[0].Detail(), "not the string case number") {
+		t.Errorf("the diagnostic should warn about the id/number confusion, got: %s",
+			resp.Diagnostics.Errors()[0].Detail())
+	}
+}
+
+func TestTaskRead_SurfacesClientError(t *testing.T) {
+	f := &taskFake{err: errors.New("upstream exploded")}
+	resp := readTask(t, f, map[string]tftypes.Value{
+		"case_id": tftypes.NewValue(tftypes.Number, 2),
+		"id":      tftypes.NewValue(tftypes.Number, 1),
+	})
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a client error must surface")
+	}
+}
+
+func TestTaskRead_AbsentFromCompleteReadSaysNotFound(t *testing.T) {
+	f := &taskFake{scan: client.TaskScan{Tasks: sampleTasks(), Total: 2, Fetched: 2}}
+	resp := readTask(t, f, map[string]tftypes.Value{
+		"case_id": tftypes.NewValue(tftypes.Number, 2),
+		"id":      tftypes.NewValue(tftypes.Number, 999),
+	})
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a missing task must error")
+	}
+	if !strings.Contains(strings.ToLower(resp.Diagnostics.Errors()[0].Summary()), "not found") {
+		t.Errorf("summary = %q", resp.Diagnostics.Errors()[0].Summary())
+	}
+}
+
+func TestTaskRead_ExposesGatedFieldsWhenRequested(t *testing.T) {
+	f := &taskFake{scan: client.TaskScan{Tasks: sampleTasks(), Total: 2, Fetched: 2}}
+	resp := readTask(t, f, map[string]tftypes.Value{
+		"case_id":                 tftypes.NewValue(tftypes.Number, 2),
+		"id":                      tftypes.NewValue(tftypes.Number, 5),
+		"include_contact_details": tftypes.NewValue(tftypes.Bool, true),
+		"include_financials":      tftypes.NewValue(tftypes.Bool, true),
+	})
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected error: %v", resp.Diagnostics.Errors())
+	}
+	var state taskDataSourceModel
+	resp.State.Get(context.Background(), &state)
+	if state.AssigneeWorkerNr.ValueInt64() != 1 {
+		t.Errorf("assignee_worker_nr = %d, want 1", state.AssigneeWorkerNr.ValueInt64())
+	}
+	if state.PriceFixed.ValueInt64() != 550 {
+		t.Errorf("price_fixed = %d, want 550", state.PriceFixed.ValueInt64())
+	}
+}
