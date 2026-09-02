@@ -108,11 +108,12 @@ func taskAttributes() map[string]schema.Attribute {
 		"finished_by":        "Who completed the task",
 	} {
 		d := desc + ". **Null unless `include_contact_details` is set** -- this identifies a person."
-		if name == "assignee_worker_nr" {
+		switch name {
+		case "assignee_worker_nr":
 			a[name] = schema.Int64Attribute{Computed: true, MarkdownDescription: d + " Null also when unassigned."}
-		} else if name == "assigned_to_me" {
+		case "assigned_to_me":
 			a[name] = schema.BoolAttribute{Computed: true, MarkdownDescription: d}
-		} else {
+		default:
 			a[name] = schema.StringAttribute{Computed: true, MarkdownDescription: d}
 		}
 	}

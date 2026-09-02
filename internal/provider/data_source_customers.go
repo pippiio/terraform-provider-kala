@@ -524,6 +524,8 @@ func resolveCustomerSelector(cfg customerDataSourceModel) (customerSelector, err
 	case 1:
 		return set[0], nil
 	case 0:
+		//nolint:staticcheck // ST1005: rendered verbatim as diagnostic prose, where a
+		// terminal period is correct -- this is not appended to another sentence.
 		return customerSelector{}, errors.New(
 			"Set exactly one of `id`, `number`, or `cvr` to identify the customer.")
 	default:
@@ -531,6 +533,7 @@ func resolveCustomerSelector(cfg customerDataSourceModel) (customerSelector, err
 		for _, s := range set {
 			names = append(names, "`"+s.attr+"`")
 		}
+		//nolint:staticcheck // ST1005: rendered verbatim as diagnostic prose.
 		return customerSelector{}, fmt.Errorf(
 			"Set exactly one of `id`, `number`, or `cvr`; %s were all set. "+
 				"A data source must resolve to a single customer, and combining selectors "+

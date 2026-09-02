@@ -354,7 +354,7 @@ func (c *internalAPI) GetCase(ctx context.Context, caseNumber string) (CaseDetai
 	// archive state is not implied by the call. Left false; callers that need it
 	// learn it from ListCases.
 	detail := CaseDetail{
-		Case:                    wd.wireCase.toDomain(false),
+		Case:                    wd.toDomain(false),
 		CustomerID:              wd.CustomerID,
 		IsFinished:              wd.IsFinished,
 		ChecklistItemsTotal:     wd.ChecklistItemsTotal,

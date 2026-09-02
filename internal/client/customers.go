@@ -127,7 +127,7 @@ type wireCustomer struct {
 }
 
 func (w wireCustomer) toDomain() Customer {
-	return Customer{
+	return Customer{ //nolint:staticcheck // S1016: explicit mapping is intentional at the wire/domain boundary
 		ID:        w.ID,
 		Number:    w.Number,
 		FirstName: w.FirstName,
