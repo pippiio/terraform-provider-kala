@@ -214,8 +214,8 @@ func TestGetCase_ReturnsDetailFieldsAbsentFromTheList(t *testing.T) {
 	if d.StartDate == nil {
 		t.Fatal("StartDate not parsed from /Date(1788333543793)/")
 	}
-	if got := d.StartDate.UTC().Format(time.RFC3339); got != "2026-09-01T15:19:03Z" {
-		t.Errorf("StartDate = %s, want 2026-09-01T15:19:03Z", got)
+	if got := d.StartDate.UTC().Format(time.RFC3339); got != "2026-09-02T07:19:03Z" {
+		t.Errorf("StartDate = %s, want 2026-09-02T07:19:03Z", got)
 	}
 	if d.EndDate != nil || d.Deadline != nil {
 		t.Error("null dates must map to nil, not the zero time")
@@ -257,7 +257,7 @@ func TestParseDotNetDate(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		{name: "millisecond epoch", in: "/Date(1788333543793)/", want: "2026-09-01T15:19:03Z"},
+		{name: "millisecond epoch", in: "/Date(1788333543793)/", want: "2026-09-02T07:19:03Z"},
 		{name: "empty is unset", in: "", wantNil: true},
 		{name: "dotnet zero date is unset", in: "/Date(-62135596800000)/", wantNil: true},
 		{name: "unparseable is an error", in: "not-a-date", wantErr: true},
@@ -292,3 +292,159 @@ func TestParseDotNetDate(t *testing.T) {
 }
 
 var _ = fmt.Sprintf
+
+// --- error and edge paths ------------------------------------------------
+
+// An empty 200 on the LIST endpoint means zero cases, mirroring customers and
+// employees. It must not be read as an error.
+func TestListCases_EmptyBodyIsZeroCases(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/Auth/SignIn/"):
+			_ = json.NewEncoder(w).Encode(wireSignInResponse{
+				SecureLoginToken: "t", Companies: []wireCompany{{ID: 1, Name: "Rivendell"}},
+			})
+		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
+			_ = json.NewEncoder(w).Encode(wireSelectCompanyResponse{Token: "kauth-token"})
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := NewInternal(InternalConfig{Endpoint: srv.URL, Username: "u", Password: "p",
+		MaxRetries: 1, Timeout: 5 * time.Second, retryBaseDur: time.Microsecond})
+	scan, err := c.ListCases(t.Context(), CaseQuery{})
+	if err != nil {
+		t.Fatalf("empty 200 on a list read must mean zero cases: %v", err)
+	}
+	if len(scan.Cases) != 0 || !scan.Complete() {
+		t.Errorf("got %d cases, Complete=%v; want 0 and true", len(scan.Cases), scan.Complete())
+	}
+}
+
+func TestListCases_UndecodableBodyIsADecodeError(t *testing.T) {
+	c := badBodyClient(t, "/api/GetAllJobsSimplePaged/")
+	if _, err := c.ListCases(t.Context(), CaseQuery{}); !errors.Is(err, ErrDecode) {
+		t.Fatalf("err = %v, want ErrDecode", err)
+	}
+}
+
+func TestGetCase_UndecodableBodyIsADecodeError(t *testing.T) {
+	c := badBodyClient(t, "/api/GetJobDetailsAdvanced/")
+	if _, err := c.GetCase(t.Context(), "KA-1"); !errors.Is(err, ErrDecode) {
+		t.Fatalf("err = %v, want ErrDecode", err)
+	}
+}
+
+func TestGetCase_EmptyBodyIsNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/Auth/SignIn/"):
+			_ = json.NewEncoder(w).Encode(wireSignInResponse{
+				SecureLoginToken: "t", Companies: []wireCompany{{ID: 1, Name: "Rivendell"}},
+			})
+		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
+			_ = json.NewEncoder(w).Encode(wireSelectCompanyResponse{Token: "kauth-token"})
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := NewInternal(InternalConfig{Endpoint: srv.URL, Username: "u", Password: "p",
+		MaxRetries: 1, Timeout: 5 * time.Second, retryBaseDur: time.Microsecond})
+	if _, err := c.GetCase(t.Context(), "KA-1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
+// A 401 must surface as unauthorized, NOT be swallowed by the 500-to-not-found
+// mapping. Only ErrServer takes that path.
+func TestGetCase_UnauthorizedIsNotReportedAsNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/Auth/SignIn/"):
+			_ = json.NewEncoder(w).Encode(wireSignInResponse{
+				SecureLoginToken: "t", Companies: []wireCompany{{ID: 1, Name: "Rivendell"}},
+			})
+		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
+			_ = json.NewEncoder(w).Encode(wireSelectCompanyResponse{Token: "kauth-token"})
+		default:
+			w.WriteHeader(http.StatusUnauthorized)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := NewInternal(InternalConfig{Endpoint: srv.URL, Username: "u", Password: "p",
+		MaxRetries: 1, Timeout: 5 * time.Second, retryBaseDur: time.Microsecond})
+	_, err := c.GetCase(t.Context(), "KA-1")
+	if errors.Is(err, ErrNotFound) {
+		t.Fatal("a 401 was reported as not-found; only ErrServer may take that path")
+	}
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("err = %v, want ErrUnauthorized", err)
+	}
+}
+
+// A date the parser rejects must fail the whole read rather than silently
+// yielding a nil timestamp.
+func TestGetCase_UnparseableDateFailsTheRead(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/Auth/SignIn/"):
+			_ = json.NewEncoder(w).Encode(wireSignInResponse{
+				SecureLoginToken: "t", Companies: []wireCompany{{ID: 1, Name: "Rivendell"}},
+			})
+		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
+			_ = json.NewEncoder(w).Encode(wireSelectCompanyResponse{Token: "kauth-token"})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"caseId": 1, "caseNumber": "KA-1", "startDate": "2026-09-02T07:19:03Z",
+			})
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := NewInternal(InternalConfig{Endpoint: srv.URL, Username: "u", Password: "p",
+		MaxRetries: 1, Timeout: 5 * time.Second, retryBaseDur: time.Microsecond})
+	_, err := c.GetCase(t.Context(), "KA-1")
+	if !errors.Is(err, ErrDecode) {
+		t.Fatalf("err = %v, want ErrDecode -- an RFC3339 date is not the .NET wire format", err)
+	}
+	if !strings.Contains(err.Error(), "startDate") {
+		t.Errorf("error should name the offending field, got: %v", err)
+	}
+}
+
+func TestParseDotNetDate_HandlesTimezoneOffsetSuffix(t *testing.T) {
+	got, err := parseDotNetDate("/Date(1788333543793+0200)/")
+	if err != nil {
+		t.Fatalf("offset suffixes occur in .NET output: %v", err)
+	}
+	if got == nil {
+		t.Fatal("got nil")
+	}
+	if g := got.UTC().Format(time.RFC3339); g != "2026-09-02T07:19:03Z" {
+		t.Errorf("got %s, want 2026-09-02T07:19:03Z -- the epoch is already UTC", g)
+	}
+}
+
+// badBodyClient serves undecodable JSON on the given path after a successful
+// handshake.
+func badBodyClient(t *testing.T, path string) InternalClient {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/Auth/SignIn/"):
+			_ = json.NewEncoder(w).Encode(wireSignInResponse{
+				SecureLoginToken: "t", Companies: []wireCompany{{ID: 1, Name: "Rivendell"}},
+			})
+		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
+			_ = json.NewEncoder(w).Encode(wireSelectCompanyResponse{Token: "kauth-token"})
+		case strings.HasSuffix(r.URL.Path, path):
+			_, _ = w.Write([]byte(`{"cases": "not-an-array"`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return NewInternal(InternalConfig{Endpoint: srv.URL, Username: "u", Password: "p",
+		MaxRetries: 1, Timeout: 5 * time.Second, retryBaseDur: time.Microsecond})
+}

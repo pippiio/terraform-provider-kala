@@ -2,6 +2,7 @@ package client
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -263,5 +264,47 @@ func TestListCustomers_SendsCompanyHeader(t *testing.T) {
 	}
 	if gotToken != "kauth-token" {
 		t.Errorf("kauthtoken header = %q", gotToken)
+	}
+}
+
+func TestListCustomers_UndecodableBodyIsADecodeError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/Auth/SignIn/"):
+			_ = json.NewEncoder(w).Encode(wireSignInResponse{
+				SecureLoginToken: "t", Companies: []wireCompany{{ID: 1, Name: "Rivendell"}},
+			})
+		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
+			_ = json.NewEncoder(w).Encode(wireSelectCompanyResponse{Token: "kauth-token"})
+		default:
+			_, _ = w.Write([]byte(`{"customers": "not-an-array"`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := NewInternal(InternalConfig{Endpoint: srv.URL, Username: "u", Password: "p",
+		MaxRetries: 1, Timeout: 5 * time.Second, retryBaseDur: time.Microsecond})
+	if _, err := c.ListCustomers(t.Context(), CustomerQuery{}); !errors.Is(err, ErrDecode) {
+		t.Fatalf("err = %v, want ErrDecode", err)
+	}
+}
+
+func TestListCustomers_UpstreamErrorPropagates(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/Auth/SignIn/"):
+			_ = json.NewEncoder(w).Encode(wireSignInResponse{
+				SecureLoginToken: "t", Companies: []wireCompany{{ID: 1, Name: "Rivendell"}},
+			})
+		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
+			_ = json.NewEncoder(w).Encode(wireSelectCompanyResponse{Token: "kauth-token"})
+		default:
+			w.WriteHeader(http.StatusForbidden)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := NewInternal(InternalConfig{Endpoint: srv.URL, Username: "u", Password: "p",
+		MaxRetries: 1, Timeout: 5 * time.Second, retryBaseDur: time.Microsecond})
+	if _, err := c.ListCustomers(t.Context(), CustomerQuery{}); !errors.Is(err, ErrClientRequest) {
+		t.Fatalf("err = %v, want ErrClientRequest", err)
 	}
 }
