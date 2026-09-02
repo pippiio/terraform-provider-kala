@@ -439,3 +439,166 @@ func TestCustomerRead_SurfacesClientError(t *testing.T) {
 		t.Fatal("a client error must surface as a diagnostic")
 	}
 }
+
+// --- selectors (id / number / cvr) ---------------------------------------
+
+func TestCustomerDataSource_SelectorsAreOptionalNotRequired(t *testing.T) {
+	sch := customerSchema(t)
+	for _, name := range []string{"id", "number", "cvr"} {
+		attr, ok := sch.Attributes[name]
+		if !ok {
+			t.Fatalf("schema is missing selector %q", name)
+		}
+		if attr.IsRequired() {
+			t.Errorf("%s must be Optional -- exactly one selector is required, not this one specifically", name)
+		}
+		if !attr.IsOptional() {
+			t.Errorf("%s must be Optional", name)
+		}
+	}
+}
+
+func TestCustomerRead_NoSelectorIsAnError(t *testing.T) {
+	f := &customerFake{scan: client.CustomerScan{Customers: sampleCustomers(), Total: 2, Fetched: 2}}
+	resp := readCustomer(t, f, nil)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a lookup with no selector must error")
+	}
+	d := resp.Diagnostics.Errors()[0].Detail()
+	for _, want := range []string{"id", "number", "cvr"} {
+		if !strings.Contains(d, want) {
+			t.Errorf("the diagnostic must list the available selectors; %q missing from: %s", want, d)
+		}
+	}
+}
+
+func TestCustomerRead_TwoSelectorsIsAnError(t *testing.T) {
+	f := &customerFake{scan: client.CustomerScan{Customers: sampleCustomers(), Total: 2, Fetched: 2}}
+	resp := readCustomer(t, f, map[string]tftypes.Value{
+		"id":  tftypes.NewValue(tftypes.Number, 1),
+		"cvr": tftypes.NewValue(tftypes.String, "12345678"),
+	})
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("more than one selector must error rather than silently preferring one")
+	}
+}
+
+// A cvr lookup prefilters SERVER-SIDE via the query parameter, so it does not
+// have to read the whole account the way an id lookup does.
+func TestCustomerRead_CVRPrefiltersUpstream(t *testing.T) {
+	f := &customerFake{scan: client.CustomerScan{
+		Customers: sampleCustomers()[:1], Total: 1, Fetched: 1,
+	}}
+	resp := readCustomer(t, f, map[string]tftypes.Value{
+		"cvr": tftypes.NewValue(tftypes.String, "12345678"),
+	})
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected error: %v", resp.Diagnostics.Errors())
+	}
+	if f.got.Search != "12345678" {
+		t.Errorf("upstream query = %q, want the cvr so the set is narrowed server-side", f.got.Search)
+	}
+	var state customerDataSourceModel
+	resp.State.Get(context.Background(), &state)
+	if state.ID.ValueInt64() != 1 {
+		t.Errorf("resolved id = %d, want 1", state.ID.ValueInt64())
+	}
+}
+
+func TestCustomerRead_NumberSelectorPrefiltersUpstream(t *testing.T) {
+	f := &customerFake{scan: client.CustomerScan{Customers: sampleCustomers(), Total: 2, Fetched: 2}}
+	resp := readCustomer(t, f, map[string]tftypes.Value{
+		"number": tftypes.NewValue(tftypes.String, "K-002"),
+	})
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected error: %v", resp.Diagnostics.Errors())
+	}
+	if f.got.Search != "K-002" {
+		t.Errorf("upstream query = %q, want K-002", f.got.Search)
+	}
+	var state customerDataSourceModel
+	resp.State.Get(context.Background(), &state)
+	if state.ID.ValueInt64() != 2 {
+		t.Errorf("resolved id = %d, want 2", state.ID.ValueInt64())
+	}
+}
+
+// An id cannot be prefiltered: query searches text, so passing an id through it
+// would return nothing and the lookup would report an existing customer as
+// missing. The id path must scan instead.
+func TestCustomerRead_IDSelectorDoesNotPrefilterUpstream(t *testing.T) {
+	f := &customerFake{scan: client.CustomerScan{Customers: sampleCustomers(), Total: 2, Fetched: 2}}
+	resp := readCustomer(t, f, map[string]tftypes.Value{
+		"id": tftypes.NewValue(tftypes.Number, 2),
+	})
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected error: %v", resp.Diagnostics.Errors())
+	}
+	if f.got.Search != "" {
+		t.Errorf("query = %q; an id must not be sent as a text search", f.got.Search)
+	}
+}
+
+// The query parameter narrows but does not exact-match: searching a cvr can
+// return neighbours. The result must still be filtered client-side.
+func TestCustomerRead_PrefilterIsNarrowedByAnExactClientSideMatch(t *testing.T) {
+	loose := sampleCustomers() // both returned by a loose upstream query
+	f := &customerFake{scan: client.CustomerScan{Customers: loose, Total: 2, Fetched: 2}}
+	resp := readCustomer(t, f, map[string]tftypes.Value{
+		"cvr": tftypes.NewValue(tftypes.String, "87654321"),
+	})
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected error: %v", resp.Diagnostics.Errors())
+	}
+	var state customerDataSourceModel
+	resp.State.Get(context.Background(), &state)
+	if state.ID.ValueInt64() != 2 {
+		t.Errorf("resolved id = %d, want 2 -- upstream returned both, the exact cvr match is customer 2",
+			state.ID.ValueInt64())
+	}
+}
+
+// A data source must resolve to exactly one record. Two matches is an error,
+// not a silent first-wins.
+func TestCustomerRead_AmbiguousMatchIsAnError(t *testing.T) {
+	dupes := sampleCustomers()
+	dupes[1].CVR = dupes[0].CVR // two customers sharing a cvr
+	f := &customerFake{scan: client.CustomerScan{Customers: dupes, Total: 2, Fetched: 2}}
+	resp := readCustomer(t, f, map[string]tftypes.Value{
+		"cvr": tftypes.NewValue(tftypes.String, "12345678"),
+	})
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("two matches must error rather than silently returning the first")
+	}
+	d := resp.Diagnostics.Errors()[0]
+	if !strings.Contains(d.Detail(), "2") {
+		t.Errorf("the diagnostic should say how many matched, got: %s", d.Detail())
+	}
+}
+
+func TestCustomerRead_CVRNotFoundInACompleteReadSaysNotFound(t *testing.T) {
+	f := &customerFake{scan: client.CustomerScan{Customers: sampleCustomers(), Total: 2, Fetched: 2}}
+	resp := readCustomer(t, f, map[string]tftypes.Value{
+		"cvr": tftypes.NewValue(tftypes.String, "00000000"),
+	})
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("no match must error")
+	}
+	if !strings.Contains(strings.ToLower(resp.Diagnostics.Errors()[0].Summary()), "not found") {
+		t.Errorf("summary = %q", resp.Diagnostics.Errors()[0].Summary())
+	}
+}
+
+// The partial-read guard applies to every selector, not just id.
+func TestCustomerRead_CVRNotFoundInAPartialReadSaysIncomplete(t *testing.T) {
+	f := &customerFake{scan: client.CustomerScan{Customers: sampleCustomers(), Total: 500, Fetched: 2}}
+	resp := readCustomer(t, f, map[string]tftypes.Value{
+		"cvr": tftypes.NewValue(tftypes.String, "00000000"),
+	})
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("an inconclusive lookup must error")
+	}
+	if strings.Contains(strings.ToLower(resp.Diagnostics.Errors()[0].Summary()), "not found") {
+		t.Error("a partial read must not report not-found for a cvr selector either")
+	}
+}
