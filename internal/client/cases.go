@@ -92,6 +92,18 @@ type CaseDetail struct {
 	StartDate *time.Time
 	EndDate   *time.Time
 	Deadline  *time.Time
+
+	// Financial and hour-registration data. Commercially sensitive and
+	// transactional; the provider exposes these only behind an explicit opt-in
+	// (FR7), but the client supplies them so that opt-in has something to show.
+	Cost                 int
+	Sales                int
+	Result               int
+	Invoiced             int
+	Uninvoiced           int
+	Realised             int
+	RegisteredHoursTotal int
+	BilledHours          int
 }
 
 // CaseQuery controls a case list read.
@@ -169,6 +181,15 @@ type wireCaseDetail struct {
 	StartDate               string `json:"startDate"`
 	EndDate                 string `json:"endDate"`
 	Deadline                string `json:"deadline"`
+
+	Cost                 int `json:"cost"`
+	Sales                int `json:"sales"`
+	Result               int `json:"result"`
+	Invoiced             int `json:"invoiced"`
+	Uninvoiced           int `json:"uninvoiced"`
+	Realised             int `json:"realised"`
+	RegisteredHoursTotal int `json:"registeredHoursTotal"`
+	BilledHours          int `json:"billedHours"`
 }
 
 // listCasesBody is the request body. finishedJobs is pinned to false: it had no
@@ -321,6 +342,15 @@ func (c *internalAPI) GetCase(ctx context.Context, caseNumber string) (CaseDetai
 		ChecklistItemsTotal:     wd.ChecklistItemsTotal,
 		ChecklistItemsCompleted: wd.ChecklistItemsCompleted,
 		EconomySyncFailed:       wd.EconomySyncFailed,
+
+		Cost:                 wd.Cost,
+		Sales:                wd.Sales,
+		Result:               wd.Result,
+		Invoiced:             wd.Invoiced,
+		Uninvoiced:           wd.Uninvoiced,
+		Realised:             wd.Realised,
+		RegisteredHoursTotal: wd.RegisteredHoursTotal,
+		BilledHours:          wd.BilledHours,
 	}
 
 	for _, f := range []struct {

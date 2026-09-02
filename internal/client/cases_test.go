@@ -448,3 +448,45 @@ func badBodyClient(t *testing.T, path string) InternalClient {
 	return NewInternal(InternalConfig{Endpoint: srv.URL, Username: "u", Password: "p",
 		MaxRetries: 1, Timeout: 5 * time.Second, retryBaseDur: time.Microsecond})
 }
+
+// FR7: financial and hour-registration data is exposed behind an opt-in at the
+// provider layer, so the client must be able to supply it. These fields exist
+// only on the detail endpoint -- the list shape has none of them.
+func TestGetCase_DecodesFinancialFields(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/Auth/SignIn/"):
+			_ = json.NewEncoder(w).Encode(wireSignInResponse{
+				SecureLoginToken: "t", Companies: []wireCompany{{ID: 1, Name: "Rivendell"}},
+			})
+		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
+			_ = json.NewEncoder(w).Encode(wireSelectCompanyResponse{Token: "kauth-token"})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"caseId": 1, "caseNumber": "KA-1", "caseName": "Roof works",
+				"cost": 1200, "sales": 4000, "result": 2800,
+				"invoiced": 1500, "uninvoiced": 2500, "realised": 900,
+				"registeredHoursTotal": 37, "billedHours": 30,
+			})
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := NewInternal(InternalConfig{Endpoint: srv.URL, Username: "u", Password: "p",
+		MaxRetries: 1, Timeout: 5 * time.Second, retryBaseDur: time.Microsecond})
+	d, err := c.GetCase(t.Context(), "KA-1")
+	if err != nil {
+		t.Fatalf("GetCase: %v", err)
+	}
+	for name, got := range map[string]int{
+		"Cost": d.Cost, "Sales": d.Sales, "Result": d.Result,
+		"Invoiced": d.Invoiced, "Uninvoiced": d.Uninvoiced, "Realised": d.Realised,
+		"RegisteredHoursTotal": d.RegisteredHoursTotal, "BilledHours": d.BilledHours,
+	} {
+		if got == 0 {
+			t.Errorf("%s = 0; the detail endpoint supplied a value", name)
+		}
+	}
+	if d.Sales != 4000 || d.Result != 2800 {
+		t.Errorf("Sales/Result = %d/%d, want 4000/2800", d.Sales, d.Result)
+	}
+}
