@@ -74,7 +74,7 @@ func (r *employeeResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			"must be configured on the provider.\n\n" +
 			"> **Destroy deactivates rather than deletes.** Kala has no delete endpoint for " +
 			"employees. `terraform destroy` sets the employee inactive and warns; their record, " +
-			"settings, and history remain. See ADR-002.\n\n" +
+			"settings, and history remain.\n\n" +
 			"> **An existing `employee_number` is adopted, not rejected.** If the number is already " +
 			"in use, the resource takes ownership of that employee and reactivates them if they " +
 			"were inactive.",
@@ -421,7 +421,7 @@ func (r *employeeResource) Update(ctx context.Context, req resource.UpdateReques
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-// Delete deactivates the employee (ADR-002).
+// Delete deactivates the employee.
 //
 // This is the one resource whose Delete writes upstream. ARCH1.5 explicitly
 // excludes this path from graceful degradation: a failed deactivation must fail

@@ -163,12 +163,3 @@ every platform and creates a **draft** GitHub Release for a human to publish.
 
 Signing is optional; configure `GPG_PRIVATE_KEY` and `GPG_PASSPHRASE` to enable
 it. See [docs/private-distribution.md](docs/private-distribution.md#cutting-a-release).
-
-## Project context
-
-Design decisions, constraints, and the API quirks this provider works around are
-recorded under [`draft/`](draft/):
-
-- [`draft/adrs/`](draft/adrs/) — why destroy deactivates, and why snapshot-and-restore was rejected
-- [`draft/guardrails.md`](draft/guardrails.md) — the fourteen permitted internal-API writes, and the rules around them
-- [`draft/product.md`](draft/product.md) — scope, constraints, and open questions

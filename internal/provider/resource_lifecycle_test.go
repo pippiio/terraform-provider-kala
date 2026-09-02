@@ -262,7 +262,7 @@ func TestUpdate_DoesNotRevalidateTheKey(t *testing.T) {
 
 // --- Delete ---------------------------------------------------------------
 
-// ADR-001 / TF1.1: destroy writes nothing and must warn, naming what remains.
+// TF1.1: destroy writes nothing and must warn, naming what remains.
 func TestDelete_WritesNothingAndWarnsWithSpecifics(t *testing.T) {
 	fc := &fakeClient{}
 	r := newSettingResource(fc)

@@ -54,7 +54,7 @@ func (r *employeeSettingResource) Schema(_ context.Context, _ resource.SchemaReq
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Manages a single setting on an existing Kala employee.\n\n" +
 			"> **Kala cannot delete settings.** `terraform destroy` removes this resource from " +
-			"state and warns; the setting remains on the employee. See ADR-001.",
+			"state and warns; the setting remains on the employee.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:            true,
@@ -258,7 +258,7 @@ func (r *employeeSettingResource) Update(ctx context.Context, req resource.Updat
 
 // Delete performs no API call.
 //
-// Kala has no endpoint to remove a setting (ADR-001, guardrail ARCH1.6). The
+// Kala has no endpoint to remove a setting (guardrail ARCH1.6). The
 // resource leaves state, the setting stays on the employee, and the warning says
 // so explicitly rather than letting the operator infer a cleanup that did not
 // happen.

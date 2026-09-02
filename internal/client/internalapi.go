@@ -16,7 +16,7 @@ import (
 
 // The internal app API is the surface Kala's own web client uses. It is
 // undocumented and unversioned, and it is the ONLY place employee activation
-// lives (ADR-002).
+// lives.
 //
 // Guardrail ARCH1.3 enumerates every write permitted here; see that list before
 // adding another. Every write must be verified by a read-back (ARCH1.8). Nomenclature differs from webapiv2:

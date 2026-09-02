@@ -651,7 +651,7 @@ func TestUpdateEmployee_NoActivationChangeMakesNoWrite(t *testing.T) {
 	}
 }
 
-// --- Delete (ADR-002) -----------------------------------------------------
+// --- Delete ---------------------------------------------------------------
 
 func TestDeleteEmployee_DeactivatesAndWarns(t *testing.T) {
 	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "Departing", IsValidated: true})

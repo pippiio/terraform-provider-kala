@@ -8,8 +8,7 @@
 // (kauthtoken auth, "worker") — with different shapes for the same concept. An
 // interface named after webapiv2's endpoints would be a rename rather than an
 // abstraction, and the second implementation could not satisfy it without the
-// provider layer type-switching on which client it holds. See ADR-adjacent
-// discussion in the track spec, risk R7.
+// provider layer type-switching on which client it holds.
 package client
 
 import "context"

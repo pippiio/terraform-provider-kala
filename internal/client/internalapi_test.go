@@ -196,7 +196,7 @@ func TestInternal_PasswordNeverAppearsInErrors(t *testing.T) {
 	}
 }
 
-// --- activation (ADR-002) -------------------------------------------------
+// --- activation -----------------------------------------------------------
 
 func TestInternal_SetWorkerValidatedDeactivates(t *testing.T) {
 	m := newInternalMock(t)
