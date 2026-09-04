@@ -1,15 +1,24 @@
 BINARY := terraform-provider-kala
 COVER_PROFILE := coverage.out
 
-.PHONY: build test cover cover-html lint fmt fmt-check install-mirror release-check vuln clean help
+.PHONY: build test testacc cover cover-html lint fmt fmt-check install-mirror release-check vuln clean help
 
 ## build: compile the provider binary
 build:
 	go build -o $(BINARY) .
 
-## test: run unit tests (no network; acceptance tests are deferred — see spec Non-Goals)
+## test: run unit tests (hermetic — no network, no credentials)
 test:
 	go test ./... -count=1
+
+## testacc: run acceptance tests against a real Kala tenant.
+##          Requires KALA_API_KEY, KALA_USERNAME, KALA_PASSWORD,
+##          KALA_ACC_EMPLOYEE_NUMBER and KALA_ACC_EMAIL. Creates the employee
+##          under that number if it does not exist, and CANNOT delete it
+##          afterwards — Kala has no delete. Read the Acceptance tests section
+##          of README.md before the first run.
+testacc:
+	TF_ACC=1 go test ./internal/provider/ -run '^TestAcc' -count=1 -v -timeout 30m
 
 ## cover: run unit tests with coverage and report the total
 cover:

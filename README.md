@@ -115,6 +115,7 @@ make test         # unit tests — hermetic, no credentials, no network
 make cover        # unit tests with coverage
 make lint         # golangci-lint
 make fmt          # gofmt -s -w
+make testacc      # acceptance tests — real tenant, real writes
 ```
 
 Unit tests use `httptest` mocks whose response shapes are copied from real
@@ -127,6 +128,42 @@ KALA_PROBE=1 go test ./internal/client/ -run TestIntegration_InternalRead -v
 
 `TestIntegration_CreateEmployee` creates a **permanent** employee — Kala has no
 delete — and is gated behind its own variable for that reason.
+
+### Acceptance tests
+
+`make testacc` runs real Terraform against a real Kala tenant. It is gated on
+`TF_ACC` and skips entirely without it, so `make test` and CI stay hermetic.
+These never run in CI: the tenant holds real personal data, and no credential
+for it belongs in repository secrets.
+
+```bash
+export KALA_API_KEY=...
+export KALA_USERNAME=...
+export KALA_PASSWORD=...
+
+export KALA_ACC_EMPLOYEE_NUMBER=9001      # a number reserved for testing
+export KALA_ACC_EMPLOYEE_NUMBER_ALT=9002  # optional; enables the adoption test
+export KALA_ACC_EMAIL=terraform-acc@example.com
+
+make testacc
+```
+
+**Pick the numbers deliberately, and reserve them.** `KALA_ACC_EMPLOYEE_NUMBER`
+has no default on purpose: the first run creates a real employee under whatever
+number you give it, and **Kala cannot delete an employee**. A number that
+already belongs to someone would be adopted and written to instead.
+
+Once reserved, the suite is safely repeatable. Create is an upsert and destroy
+deactivates, so every run after the first adopts and reactivates the same record
+rather than making another. A hundred runs leave one employee, not a hundred.
+
+Every acceptance configuration sets `send_welcome_email = false`. Mail reaches a
+real person and cannot be recalled, so the suite never sends any — including on
+the very first run, when the employee is genuinely created.
+
+The tests leave the employee **deactivated**, because that is what
+`terraform destroy` does and what `CheckDestroy` verifies. That is the expected
+end state, not a failure.
 
 To work against a locally built binary, use a dev override:
 

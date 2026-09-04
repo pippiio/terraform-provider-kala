@@ -33,8 +33,12 @@ jobs:
           version: latest
 
       # Unit tests only — they make no network calls and need no credentials.
-      # Acceptance tests are deferred until a sandbox tenant exists (see the
-      # track spec's Non-Goals), so TF_ACC stays unset here.
+      #
+      # TF_ACC stays unset deliberately. The acceptance suite exists (see the
+      # Acceptance tests section of README.md) but runs only from a developer's
+      # machine: it writes to a real tenant holding real personal data, and no
+      # credential for that tenant belongs in repository secrets. Its absence
+      # here is a decision, not an omission.
       - name: Unit tests
         run: make cover
 
