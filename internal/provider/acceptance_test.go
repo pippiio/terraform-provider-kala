@@ -98,12 +98,12 @@ func accEmailFor(t *testing.T, number int64) string {
 // to a derived one when Kala reports none.
 //
 // Tests whose subject is NOT the email use this, so they do not depend on an
-// endpoint unrelated to what they assert. That matters here: SetEmailNew
-// silently declines to change the address for some employees — observed
-// 2026-09-04, one worker accepted every address tried and another refused every
-// address tried, active or inactive — so requiring a writable email on every
-// employee the suite touches would make unrelated tests fail on tenant data
-// rather than on provider behaviour.
+// endpoint unrelated to what they assert. That matters here: Kala refuses to
+// change the email of an employee whose login belongs to more than one company
+// ("Man kan ikke skifte email, når man er tilknyttet flere virksomheder"), and
+// whether a given tenant's test employees are in that state is not something
+// this suite controls. Requiring a writable email on every employee it touches
+// would make unrelated tests fail on tenant data rather than on the provider.
 //
 // Changing the email is the lifecycle test's job, on the primary employee.
 func accCurrentEmail(t *testing.T, number int64) string {

@@ -426,7 +426,7 @@ func (c *internalAPI) authedRequest(
 
 	raw, err := c.requestWithContentType(ctx, method, path, body, contentType, headers(token, companyID))
 	if err == nil || !errors.Is(err, ErrUnauthorized) {
-		return raw, err
+		return raw, errorEnvelope(raw, err)
 	}
 
 	// The token was rejected: drop it and try once with a fresh session.
@@ -438,7 +438,49 @@ func (c *internalAPI) authedRequest(
 		return nil, err
 	}
 
-	return c.requestWithContentType(ctx, method, path, body, contentType, headers(token, companyID))
+	raw, err = c.requestWithContentType(ctx, method, path, body, contentType, headers(token, companyID))
+	return raw, errorEnvelope(raw, err)
+}
+
+// wireStatusEnvelope is the failure shape the internal API returns WITH HTTP 200.
+type wireStatusEnvelope struct {
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}
+
+// errorEnvelope turns Kala's in-body failure report into a real error.
+//
+// OBSERVED 2026-09-04: the internal API answers a refused write with HTTP 200
+// and {"status":"Error","message":"..."} — for example, refusing to change the
+// email of a user attached to more than one company. Every write here read the
+// status line, saw 200, and discarded the body, so the refusal was invisible
+// and only the read-back verification noticed something was wrong. That made a
+// precise, translated explanation from Kala surface as a generic mismatch.
+//
+// Successful writes answer either {"status":"Success"} or a small data object
+// with no status field at all, so only an explicit "Error" is treated as a
+// failure. Anything that does not decode as a JSON object — the Workers list is
+// an array — is passed through untouched.
+func errorEnvelope(raw []byte, err error) error {
+	if err != nil {
+		return err
+	}
+
+	var env wireStatusEnvelope
+	if json.Unmarshal(raw, &env) != nil {
+		return nil
+	}
+	if !strings.EqualFold(env.Status, "Error") {
+		return nil
+	}
+
+	msg := env.Message
+	if msg == "" {
+		msg = "the API reported an error without a message"
+	}
+	// Kala's messages are in Danish and are the most specific explanation
+	// available, so they are surfaced verbatim rather than paraphrased.
+	return fmt.Errorf("kala rejected the request: %s", msg)
 }
 
 func (c *internalAPI) signIn(ctx context.Context) (wireSignInResponse, error) {
@@ -719,20 +761,15 @@ func (c *internalAPI) SetWorkerEmail(ctx context.Context, workerNr int64, email 
 		return fmt.Errorf("kala: could not verify the email change for worker %d: %w", workerNr, err)
 	}
 	if !strings.EqualFold(info.Email, email) {
-		// OBSERVED 2026-09-04 against the live tenant: SetEmailNew returns
-		// success and changes nothing for SOME workers. One worker accepted
-		// every address tried; another refused every address tried — the same
-		// requests, differing only in workerNr — whether active or inactive.
-		// So the rejection is a property of the employee, not of the address.
-		//
-		// The cause is not established, and this message deliberately does not
-		// guess at one. What it does say is that retrying with a different
-		// address will not help, which is the mistake the bare mismatch invites.
+		// This is now the backstop rather than the first line of defence.
+		// SetEmailNew reports a refusal in the response body — see
+		// errorEnvelope — so a caller normally gets Kala's own explanation,
+		// such as being unable to change the email of a user attached to more
+		// than one company. Reaching here means the write was accepted, was not
+		// reported as an error, and still did not take effect.
 		return fmt.Errorf(
 			"kala: SetEmail for worker %d reported success but the address reads back as %q, "+
-				"expected %q. Kala silently ignores the change for some employees regardless "+
-				"of the address, so a different address is unlikely to help; this employee's "+
-				"email may only be changeable in Kala's own interface",
+				"expected %q, and Kala gave no reason",
 			workerNr, info.Email, email)
 	}
 

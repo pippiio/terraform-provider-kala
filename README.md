@@ -107,14 +107,18 @@ settings Kala returns, but the provider does not write them. Kala's list endpoin
 under-reports settings compared to its single-employee endpoint, so treat the
 list as what Kala reported rather than as the complete set.
 
-**Some employees' email addresses cannot be changed.** Kala's `SetEmailNew`
-returns success and changes nothing for certain employees. Observed 2026-09-04
-against a live tenant: one employee accepted every address tried, another
-refused every address tried — the same request differing only in the employee
-number, in both active and inactive states. The provider verifies the write by
-reading it back, so it reports an error rather than a false success. Retrying
-with a different address will not help; those records appear to be editable only
-in Kala's own interface.
+**The internal API reports failures with `HTTP 200`.** A refused write answers
+`200` with `{"status": "Error", "message": "..."}` in the body. The status line
+alone is therefore never evidence that a write landed. Every response is checked
+for that envelope and Kala's message is surfaced verbatim — it is in Danish, and
+it is the most specific explanation available.
+
+For example, an employee whose Kala login belongs to more than one company
+cannot have their email changed: *"Man kan ikke skifte email, når man er
+tilknyttet flere virksomheder."* Retrying with a different address will not help.
+
+Read-back verification remains behind that check as a backstop, for a write that
+is neither reported as an error nor actually applied.
 
 **Renaming works, through an endpoint the documentation does not mention.**
 `ChangeWorkerName` was supplied from a browser session on 2026-09-04 and

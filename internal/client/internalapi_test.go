@@ -518,11 +518,11 @@ func TestInternal_SetWorkerEmailFailsWhenUnverified(t *testing.T) {
 	if !strings.Contains(err.Error(), "reads back as") {
 		t.Errorf("error should report the read-back mismatch, got %q", err.Error())
 	}
-	// A bare mismatch invites the operator to retry with a different address.
-	// Observed against the live tenant, that never helps: the endpoint no-ops
-	// per employee, not per address. Saying so is the useful part.
-	if !strings.Contains(err.Error(), "regardless") {
-		t.Errorf("error should say a different address will not help, got %q", err.Error())
+	// Reaching the read-back means Kala neither errored nor applied the change.
+	// Saying it gave no reason distinguishes this from the common case, where
+	// the response body carries an explanation.
+	if !strings.Contains(err.Error(), "gave no reason") {
+		t.Errorf("error should say Kala offered no explanation, got %q", err.Error())
 	}
 }
 
@@ -691,5 +691,95 @@ func TestInternal_PersistentUnauthorizedDoesNotLoop(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&signIns); got > 2 {
 		t.Errorf("SignIn calls = %d — renewal must be attempted at most once", got)
+	}
+}
+
+// --- in-body error envelope ------------------------------------------------
+
+// Kala reports a refused write with HTTP 200 and {"status":"Error"}. Every
+// write here used to read the status line, see 200, and discard the body, so
+// the refusal was invisible until read-back verification noticed a mismatch —
+// which turned a precise explanation into a generic one.
+func TestInternal_ErrorEnvelopeWithHTTP200IsAFailure(t *testing.T) {
+	// The exact payload observed on 2026-09-04, refusing an email change.
+	c := workerInfoMock(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"Error",` +
+			`"message":"Man kan ikke skifte email, når man er tilknyttet flere virksomheder.",` +
+			`"AllowGet":0}`))
+	})
+
+	err := c.SetWorkerEmail(context.Background(), 2, "new@example.com")
+	if err == nil {
+		t.Fatal("an in-body error must fail the write despite HTTP 200")
+	}
+	// Kala's message is the most specific explanation available, so it must
+	// reach the operator verbatim rather than be paraphrased away.
+	if !strings.Contains(err.Error(), "tilknyttet flere virksomheder") {
+		t.Errorf("error should carry Kala's own message, got %q", err.Error())
+	}
+}
+
+// {"status":"Success"} is what most writes answer with, and must not be
+// mistaken for a failure.
+func TestInternal_SuccessEnvelopeIsNotAnError(t *testing.T) {
+	c := workerInfoMock(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			_, _ = w.Write([]byte(`{"status":"Success"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"workerNr":3,"workerId":3,"title":"T"}`))
+	})
+
+	if err := c.SetWorkerField(context.Background(), 3, FieldTitle, "T"); err != nil {
+		t.Errorf(`{"status":"Success"} must not be treated as an error: %v`, err)
+	}
+}
+
+// Several writes answer with a small data object carrying no status at all.
+// Absence of a status is not a failure.
+func TestInternal_ResponseWithoutAStatusFieldIsNotAnError(t *testing.T) {
+	c := workerInfoMock(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			// The real SetEmailNew success shape.
+			_, _ = w.Write([]byte(`{"workerId":3,"workerNr":3}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"workerNr":3,"workerId":3,"email":"new@example.com"}`))
+	})
+
+	if err := c.SetWorkerEmail(context.Background(), 3, "new@example.com"); err != nil {
+		t.Errorf("a data response with no status must not be treated as an error: %v", err)
+	}
+}
+
+// The Workers list is a JSON array, not an object. The envelope check must pass
+// it through rather than choke on it.
+func TestInternal_ArrayResponseIsNotMistakenForAnEnvelope(t *testing.T) {
+	c := workerInfoMock(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`[{"workerNr":1,"workerId":1,"name":"A","isValidated":true}]`))
+	})
+
+	got, err := c.ListWorkers(context.Background())
+	if err != nil {
+		t.Fatalf("an array response must decode normally: %v", err)
+	}
+	if len(got) != 1 {
+		t.Errorf("len = %d, want 1", len(got))
+	}
+}
+
+// An error status with no message still has to fail, and say something.
+func TestInternal_ErrorEnvelopeWithoutAMessageStillFails(t *testing.T) {
+	c := workerInfoMock(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"Error"}`))
+	})
+
+	err := c.SetWorkerBoss(context.Background(), 3, 4)
+	if err == nil {
+		t.Fatal("an error status must fail even without a message")
+	}
+	if !strings.Contains(err.Error(), "without a message") {
+		t.Errorf("error should say the message was absent, got %q", err.Error())
 	}
 }
