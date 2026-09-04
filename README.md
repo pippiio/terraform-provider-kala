@@ -80,6 +80,36 @@ documented `webapiv2` covers **reads**, while the app's internal API owns employ
 **lifecycle** — creation, activation, and every profile field. Only resources that
 touch lifecycle need `username`/`password`.
 
+### How the two APIs differ
+
+They are not two views of one system. They disagree on authentication, on
+vocabulary, on how failure is reported, and on who exists.
+
+| | `webapiv2` | Internal app API |
+|---|---|---|
+| Status | Documented | Undocumented, unversioned, may change without notice |
+| Credential | `api_key`, in the **query string** | `username`/`password` → session token, in **headers** |
+| Auth mechanics | One parameter — but `Index` spells it `apikey` and everything else `api_key` | Two-step `SignIn` → `SelectCompany`, then `kauthtoken` + `kacompany`; expiry triggers one silent re-login and retry |
+| Parameters | Query string, **even for writes** | JSON bodies |
+| Vocabulary | "employee", `employeeNumber` / `number` | "worker", with the identifier key varying *per endpoint*: `workerNr`, `workerID`, or `workerId` |
+| Paths | Flat endpoint names | `/api/…`, trailing slash present or absent per endpoint |
+| Failure reporting | HTTP status; an unknown employee is `200` with an **empty body**, not `404` | `HTTP 200` carrying `{"status":"Error","message":"…"}` — **in Danish**. `WorkerInfo` returns `500` for a missing worker |
+| Who it can see | **Active employees only** | **All workers**, active or not, via `isValidated` |
+| Role in this provider | Reads only — backs `kala_employees` | Every write, the whole lifecycle, and `kala_employee`'s own `Read` |
+
+`medarbejderNr`, `workerNr`, `workerId`, and `employeeNumber` are one value, so a
+single `employee_number` addresses a person across both.
+
+The visibility row is the one with teeth. On `webapiv2` a deactivated employee is
+indistinguishable from one who never existed — the record simply stops being
+returned. `kala_employee` therefore reads through the **internal** API: reading
+through `webapiv2` would make a destroyed employee look deleted on the next
+refresh, and Terraform would try to create someone who is already there.
+
+The same difference means `kala_employees` will not list an employee this
+provider has just deactivated. That is Kala's behaviour, not a bug in the data
+source.
+
 ## Resources and data sources
 
 | Name | Kind | Purpose |
