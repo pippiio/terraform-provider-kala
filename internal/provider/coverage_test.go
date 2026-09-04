@@ -149,3 +149,40 @@ func TestResolveCredential_UnmappedEnvVarFallsBackToGenericWording(t *testing.T)
 		t.Errorf("error should still name the env var, got %q", err.Error())
 	}
 }
+
+// --- company resolution ----------------------------------------------------
+
+// company may come from the environment like every other setting. It governs
+// which Kala tenant is written to, so a malformed value must stop configuration
+// rather than be silently discarded and fall back to whichever company Kala
+// lists first.
+func TestConfigure_MalformedCompanyEnvVarIsRejected(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"pong":"pong"}`))
+	}))
+	defer srv.Close()
+
+	t.Setenv("KALA_COMPANY", "not-a-number")
+
+	resp := configureProvider(t, cfgOverrides{endpoint: srv.URL, apiKey: "k"})
+	if !hasError(resp.Diagnostics) {
+		t.Fatal("a non-numeric KALA_COMPANY must be rejected")
+	}
+	if !strings.Contains(diagText(resp.Diagnostics), "KALA_COMPANY") {
+		t.Errorf("diagnostic should name the variable, got: %s", diagText(resp.Diagnostics))
+	}
+}
+
+func TestConfigure_CompanyFromEnvironmentIsAccepted(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"pong":"pong"}`))
+	}))
+	defer srv.Close()
+
+	t.Setenv("KALA_COMPANY", "17221")
+
+	resp := configureProvider(t, cfgOverrides{endpoint: srv.URL, apiKey: "k"})
+	if hasError(resp.Diagnostics) {
+		t.Errorf("a numeric KALA_COMPANY should be accepted: %s", diagText(resp.Diagnostics))
+	}
+}

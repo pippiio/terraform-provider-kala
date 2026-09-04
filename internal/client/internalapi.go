@@ -33,9 +33,15 @@ const (
 
 // InternalConfig configures the session-authenticated internal API client.
 type InternalConfig struct {
-	Endpoint   string
-	Username   string
-	Password   string
+	Endpoint string
+	Username string
+	Password string
+
+	// Company is the Kala company to operate against, for credentials attached
+	// to more than one. Zero means "infer", which only succeeds when the
+	// account has exactly one — see session.
+	Company int64
+
 	Timeout    time.Duration
 	MaxRetries int
 
@@ -377,7 +383,11 @@ func (c *internalAPI) session(ctx context.Context) (token string, companyID int6
 		return "", 0, fmt.Errorf("kala: sign-in succeeded but returned no companies")
 	}
 
-	company := signIn.Companies[0]
+	company, err := chooseCompany(signIn.Companies, c.cfg.Company)
+	if err != nil {
+		return "", 0, err
+	}
+
 	selected, err := c.selectCompany(ctx, company.ID, signIn.SecureLoginToken)
 	if err != nil {
 		return "", 0, err
@@ -481,6 +491,54 @@ func errorEnvelope(raw []byte, err error) error {
 	// Kala's messages are in Danish and are the most specific explanation
 	// available, so they are surfaced verbatim rather than paraphrased.
 	return fmt.Errorf("kala rejected the request: %s", msg)
+}
+
+// chooseCompany picks which Kala company the session will act on.
+//
+// A Kala login can be attached to several companies, and every subsequent
+// request carries the chosen one in the kacompany header. This selection
+// therefore decides which tenant's employees get written to.
+//
+// It used to take Companies[0] unconditionally. That is safe only while an
+// account has exactly one company: with several, the provider would write to
+// whichever Kala happened to list first, silently, and nothing guarantees that
+// order is stable between sign-ins. Guessing wrong means creating or
+// deactivating a person in the wrong organisation, so an ambiguous account is
+// refused rather than resolved by luck.
+func chooseCompany(companies []wireCompany, want int64) (wireCompany, error) {
+	if want != 0 {
+		for _, co := range companies {
+			if co.ID == want {
+				return co, nil
+			}
+		}
+		return wireCompany{}, fmt.Errorf(
+			"kala: company %d is not one this login can access; available: %s",
+			want, describeCompanies(companies))
+	}
+
+	if len(companies) == 1 {
+		return companies[0], nil
+	}
+
+	return wireCompany{}, fmt.Errorf(
+		"kala: this login is attached to %d companies, so which one to manage is ambiguous; "+
+			"set the provider's company attribute (or KALA_COMPANY) to one of: %s",
+		len(companies), describeCompanies(companies))
+}
+
+// describeCompanies renders the choices for a diagnostic. Names are included
+// because an operator knows their organisation by name, not by identifier.
+func describeCompanies(companies []wireCompany) string {
+	parts := make([]string, 0, len(companies))
+	for _, co := range companies {
+		if co.Name == "" {
+			parts = append(parts, strconv.FormatInt(co.ID, 10))
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%d (%s)", co.ID, co.Name))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func (c *internalAPI) signIn(ctx context.Context) (wireSignInResponse, error) {

@@ -71,9 +71,29 @@ export KALA_PASSWORD=...
 ```hcl
 provider "kala" {
   # endpoint = "https://app.kala.dk/webapiv2"   # the default
+  # company  = 17221                            # or KALA_COMPANY
   # skip_credential_validation = true           # for credential-less CI
 }
 ```
+
+**`company` decides which tenant is written to.** A Kala login can belong to
+several companies. Omit it when yours belongs to exactly one; when it belongs to
+several the provider refuses to guess, and names the choices:
+
+```
+kala: this login is attached to 2 companies, so which one to manage is
+ambiguous; set the provider's company attribute (or KALA_COMPANY) to one
+of: 17221 (Faurbye.io Aps), 30012 (Another Company)
+```
+
+Refusing is deliberate. The alternative is picking whichever company Kala lists
+first, and nothing guarantees that order is stable between sign-ins — so a
+guess could create or deactivate a person in the wrong organisation, silently.
+
+Note this is separate from the employee restriction below: `company` selects the
+tenant *your credentials* act on, whereas Kala refuses to change the email of an
+*employee* whose own login spans several companies. Setting `company` does not
+lift that restriction.
 
 Kala's surface is split across two APIs and neither is sufficient alone: the
 documented `webapiv2` covers **reads**, while the app's internal API owns employee

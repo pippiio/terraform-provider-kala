@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -781,5 +782,118 @@ func TestInternal_ErrorEnvelopeWithoutAMessageStillFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "without a message") {
 		t.Errorf("error should say the message was absent, got %q", err.Error())
+	}
+}
+
+// --- company selection -----------------------------------------------------
+
+// A login attached to one company needs no configuration: there is nothing to
+// disambiguate.
+func TestChooseCompany_SingleCompanyNeedsNoConfiguration(t *testing.T) {
+	got, err := chooseCompany([]wireCompany{{ID: 17221, Name: "Faurbye.io Aps"}}, 0)
+	if err != nil {
+		t.Fatalf("a single company must resolve without configuration: %v", err)
+	}
+	if got.ID != 17221 {
+		t.Errorf("ID = %d, want 17221", got.ID)
+	}
+}
+
+// The case this guard exists for. Picking Companies[0] here would write
+// employees into whichever organisation Kala happened to list first, silently,
+// with no guarantee that order is stable between sign-ins.
+func TestChooseCompany_SeveralCompaniesWithoutAChoiceIsRefused(t *testing.T) {
+	_, err := chooseCompany([]wireCompany{
+		{ID: 17221, Name: "Faurbye.io Aps"},
+		{ID: 30012, Name: "Another Company"},
+	}, 0)
+
+	if err == nil {
+		t.Fatal("an ambiguous account must be refused, not resolved by list order")
+	}
+	// The operator has to be able to act on this, so both choices must appear,
+	// with the names they would recognise.
+	for _, want := range []string{"17221", "Faurbye.io Aps", "30012", "Another Company", "company"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should mention %q so the operator can choose; got %q", want, err.Error())
+		}
+	}
+}
+
+func TestChooseCompany_ExplicitChoiceIsHonoured(t *testing.T) {
+	got, err := chooseCompany([]wireCompany{
+		{ID: 17221, Name: "First"},
+		{ID: 30012, Name: "Second"},
+	}, 30012)
+
+	if err != nil {
+		t.Fatalf("an explicit company must be selected: %v", err)
+	}
+	// Specifically NOT the first entry — that is the bug this replaced.
+	if got.ID != 30012 {
+		t.Errorf("ID = %d, want 30012, the one asked for rather than the one listed first", got.ID)
+	}
+}
+
+// Asking for a company the login cannot reach is a configuration error, and
+// must not silently fall back to one it can.
+func TestChooseCompany_UnreachableCompanyIsAnError(t *testing.T) {
+	_, err := chooseCompany([]wireCompany{{ID: 17221, Name: "Faurbye.io Aps"}}, 99999)
+	if err == nil {
+		t.Fatal("a company the login cannot access must error, not fall back")
+	}
+	if !strings.Contains(err.Error(), "99999") || !strings.Contains(err.Error(), "17221") {
+		t.Errorf("error should name both what was asked for and what is available, got %q", err.Error())
+	}
+}
+
+// Kala has returned companies without names; the diagnostic must still be
+// usable rather than printing an empty parenthesis.
+func TestChooseCompany_UnnamedCompanyStillRendersUsably(t *testing.T) {
+	_, err := chooseCompany([]wireCompany{{ID: 1}, {ID: 2}}, 0)
+	if err == nil {
+		t.Fatal("still ambiguous")
+	}
+	if strings.Contains(err.Error(), "()") {
+		t.Errorf("unnamed companies must not render an empty name, got %q", err.Error())
+	}
+}
+
+// End to end through the handshake: the configured company is the one sent to
+// SelectCompany and carried in kacompany afterwards.
+func TestInternal_ConfiguredCompanyIsTheOneSelected(t *testing.T) {
+	var selected map[string]any
+	var companyHeader string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/Auth/SignIn/"):
+			_, _ = w.Write([]byte(`{"secureLoginToken":"t","companies":[
+				{"id":17221,"name":"First"},{"id":30012,"name":"Second"}]}`))
+		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
+			body, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(body, &selected)
+			_, _ = w.Write([]byte(`{"token":"session-token"}`))
+		default:
+			companyHeader = r.Header.Get("kacompany")
+			_, _ = w.Write([]byte(`[]`))
+		}
+	}))
+	defer srv.Close()
+
+	c := NewInternal(InternalConfig{
+		Endpoint: srv.URL, Username: "u", Password: "p",
+		Company: 30012, retryBaseDur: time.Microsecond,
+	})
+
+	if _, err := c.ListWorkers(context.Background()); err != nil {
+		t.Fatalf("ListWorkers: %v", err)
+	}
+
+	if selected["globalCompanyId"] != float64(30012) {
+		t.Errorf("SelectCompany got %v, want the configured company 30012", selected)
+	}
+	if companyHeader != "30012" {
+		t.Errorf("kacompany = %q, want 30012 on every subsequent request", companyHeader)
 	}
 }

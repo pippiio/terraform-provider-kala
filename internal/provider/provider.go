@@ -7,6 +7,8 @@ package provider
 
 import (
 	"context"
+	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -65,8 +67,13 @@ func (p *kalaProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp 
 					"environment variable, which is preferred so the credential stays out of version control.",
 			},
 			"company": schema.Int64Attribute{
-				Optional:            true,
-				MarkdownDescription: "Kala company identifier. May also be set via `KALA_COMPANY`. Required only by endpoints that take a company parameter.",
+				Optional: true,
+				MarkdownDescription: "Kala company identifier. May also be set via `KALA_COMPANY`.\n\n" +
+					"A Kala login can belong to several companies, and this chooses which one the " +
+					"provider acts on — including which company's employees are created and " +
+					"deactivated. It may be omitted when the login belongs to exactly one; when it " +
+					"belongs to several, the provider refuses to guess and asks for this rather than " +
+					"writing to whichever Kala happens to list first.",
 			},
 			"timeout_seconds": schema.Int64Attribute{
 				Optional:            true,
@@ -143,10 +150,26 @@ func (p *kalaProvider) Configure(ctx context.Context, req provider.ConfigureRequ
 		}
 	}
 
+	company := config.Company.ValueInt64()
+	if config.Company.IsNull() {
+		if v, err := resolveCredential("", "KALA_COMPANY"); err == nil {
+			if n, convErr := strconv.ParseInt(v, 10, 64); convErr == nil {
+				company = n
+			} else {
+				resp.Diagnostics.AddAttributeError(
+					path.Root("company"),
+					"KALA_COMPANY is not a number",
+					fmt.Sprintf("KALA_COMPANY = %q, which is not a valid company identifier.", v),
+				)
+				return
+			}
+		}
+	}
+
 	cfg := client.Config{
 		Endpoint:   endpoint,
 		APIKey:     apiKey,
-		Company:    config.Company.ValueInt64(),
+		Company:    company,
 		Timeout:    time.Duration(config.TimeoutSeconds.ValueInt64()) * time.Second,
 		MaxRetries: int(config.MaxRetries.ValueInt64()),
 	}
@@ -188,8 +211,13 @@ func (p *kalaProvider) Configure(ctx context.Context, req provider.ConfigureRequ
 	switch {
 	case userErr == nil && passErr == nil:
 		clients.Internal = client.NewInternal(client.InternalConfig{
-			Username:   username,
-			Password:   password,
+			Username: username,
+			Password: password,
+			// The internal API's sign-in can return several companies, and the
+			// choice decides whose employees get written to. Passing company
+			// through means one attribute governs both APIs; without it this
+			// client silently took whichever Kala listed first.
+			Company:    company,
 			Timeout:    time.Duration(config.TimeoutSeconds.ValueInt64()) * time.Second,
 			MaxRetries: cfg.MaxRetries,
 		})
