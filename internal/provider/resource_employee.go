@@ -118,8 +118,8 @@ func (r *employeeResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				Computed: true,
 				Default:  booldefault.StaticBool(true),
 				MarkdownDescription: "Whether the employee is active (`isValidated` in Kala). Setting this to " +
-					"`false` deactivates them; `true` reactivates. This is the only employee field Kala " +
-					"allows Terraform to both read and write, so it is the only one with real drift detection.",
+					"`false` deactivates them; `true` reactivates. Destroying the resource sets it to " +
+					"`false` — Kala has no delete — so this is the attribute that carries offboarding.",
 			},
 
 			"title":         optionalComputedString("Job title."),
