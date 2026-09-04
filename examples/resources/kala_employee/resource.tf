@@ -1,12 +1,12 @@
-# A new hire. employee_number is chosen by you — Kala does not allocate it.
-resource "kala_employee" "carpenter" {
+# A tradesperson. employee_number is chosen by you — Kala does not allocate it.
+resource "kala_employee" "smith" {
   employee_number = 101
-  name            = "Sofie Kjær"
-  email           = "sofie.kjaer@example.com"
+  name            = "Gimli"
+  email           = "gimli@example.com"
 
-  title              = "Tømrer"
+  title              = "Smed"
   department         = "Montage"
-  initials           = "SKJ"
+  initials           = "GIM"
   phone              = "+45 20 00 00 01"
   date_of_employment = "2026-04-01"
 
@@ -18,8 +18,8 @@ resource "kala_employee" "carpenter" {
 # separate rights and are granted independently.
 resource "kala_employee" "site_manager" {
   employee_number = 100
-  name            = "Anders Holm"
-  email           = "anders.holm@example.com"
+  name            = "Aragorn Elessar"
+  email           = "aragorn@example.com"
 
   title      = "Byggeleder"
   department = "Montage"
@@ -33,22 +33,22 @@ resource "kala_employee" "site_manager" {
 # setting active = false — deactivates the employee and leaves their record,
 # registered hours, and history intact.
 resource "kala_employee" "departed" {
-  employee_number = 102
-  name            = "Mette Lund"
-  email           = "mette.lund@example.com"
+  employee_number = 120
+  name            = "Boromir"
+  email           = "boromir@example.com"
   active          = false
 }
 
-# Re-onboarding. Employee 103 belonged to someone who left years ago, and Kala
-# cannot delete employees, so the number is still in use. Create ADOPTS that
-# existing record and reactivates it rather than failing or creating a second
-# person — which is what makes re-hiring work at all.
+# Re-hiring. Employee 121 belonged to someone who left, and Kala cannot delete
+# employees, so the number is still in use. Create ADOPTS that record and
+# reactivates it rather than failing or creating a second person — which is what
+# makes re-onboarding work at all.
 #
 # No welcome email is sent on adoption or reactivation.
 resource "kala_employee" "returning" {
-  employee_number = 103
-  name            = "Mette Lund"
-  email           = "mette.lund@example.com"
+  employee_number = 121
+  name            = "Samwise Gamgee"
+  email           = "samwise@example.com"
   active          = true
 }
 
@@ -57,17 +57,17 @@ resource "kala_employee" "returning" {
 # employees have been working for years.
 locals {
   office_staff = {
-    bech = {
+    bilbo = {
       number  = 110
-      name    = "Jonas Bech"
-      email   = "jonas.bech@example.com"
+      name    = "Bilbo Baggins"
+      email   = "bilbo@example.com"
       title   = "Bogholder"
       finance = true
     }
-    sorensen = {
+    galadriel = {
       number  = 111
-      name    = "Line Sørensen"
-      email   = "line.sorensen@example.com"
+      name    = "Galadriel"
+      email   = "galadriel@example.com"
       title   = "Projektkoordinator"
       finance = false
     }

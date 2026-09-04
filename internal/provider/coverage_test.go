@@ -179,7 +179,7 @@ func TestConfigure_CompanyFromEnvironmentIsAccepted(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	t.Setenv("KALA_COMPANY", "17221")
+	t.Setenv("KALA_COMPANY", "4242")
 
 	resp := configureProvider(t, cfgOverrides{endpoint: srv.URL, apiKey: "k"})
 	if hasError(resp.Diagnostics) {

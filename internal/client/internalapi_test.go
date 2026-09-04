@@ -790,12 +790,12 @@ func TestInternal_ErrorEnvelopeWithoutAMessageStillFails(t *testing.T) {
 // A login attached to one company needs no configuration: there is nothing to
 // disambiguate.
 func TestChooseCompany_SingleCompanyNeedsNoConfiguration(t *testing.T) {
-	got, err := chooseCompany([]wireCompany{{ID: 17221, Name: "Faurbye.io Aps"}}, 0)
+	got, err := chooseCompany([]wireCompany{{ID: 4242, Name: "Rivendell"}}, 0)
 	if err != nil {
 		t.Fatalf("a single company must resolve without configuration: %v", err)
 	}
-	if got.ID != 17221 {
-		t.Errorf("ID = %d, want 17221", got.ID)
+	if got.ID != 4242 {
+		t.Errorf("ID = %d, want 4242", got.ID)
 	}
 }
 
@@ -804,8 +804,8 @@ func TestChooseCompany_SingleCompanyNeedsNoConfiguration(t *testing.T) {
 // with no guarantee that order is stable between sign-ins.
 func TestChooseCompany_SeveralCompaniesWithoutAChoiceIsRefused(t *testing.T) {
 	_, err := chooseCompany([]wireCompany{
-		{ID: 17221, Name: "Faurbye.io Aps"},
-		{ID: 30012, Name: "Another Company"},
+		{ID: 4242, Name: "Rivendell"},
+		{ID: 7000, Name: "Gondor"},
 	}, 0)
 
 	if err == nil {
@@ -813,7 +813,7 @@ func TestChooseCompany_SeveralCompaniesWithoutAChoiceIsRefused(t *testing.T) {
 	}
 	// The operator has to be able to act on this, so both choices must appear,
 	// with the names they would recognise.
-	for _, want := range []string{"17221", "Faurbye.io Aps", "30012", "Another Company", "company"} {
+	for _, want := range []string{"4242", "Rivendell", "7000", "Gondor", "company"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error should mention %q so the operator can choose; got %q", want, err.Error())
 		}
@@ -822,27 +822,27 @@ func TestChooseCompany_SeveralCompaniesWithoutAChoiceIsRefused(t *testing.T) {
 
 func TestChooseCompany_ExplicitChoiceIsHonoured(t *testing.T) {
 	got, err := chooseCompany([]wireCompany{
-		{ID: 17221, Name: "First"},
-		{ID: 30012, Name: "Second"},
-	}, 30012)
+		{ID: 4242, Name: "Rivendell"},
+		{ID: 7000, Name: "Gondor"},
+	}, 7000)
 
 	if err != nil {
 		t.Fatalf("an explicit company must be selected: %v", err)
 	}
 	// Specifically NOT the first entry — that is the bug this replaced.
-	if got.ID != 30012 {
-		t.Errorf("ID = %d, want 30012, the one asked for rather than the one listed first", got.ID)
+	if got.ID != 7000 {
+		t.Errorf("ID = %d, want 7000, the one asked for rather than the one listed first", got.ID)
 	}
 }
 
 // Asking for a company the login cannot reach is a configuration error, and
 // must not silently fall back to one it can.
 func TestChooseCompany_UnreachableCompanyIsAnError(t *testing.T) {
-	_, err := chooseCompany([]wireCompany{{ID: 17221, Name: "Faurbye.io Aps"}}, 99999)
+	_, err := chooseCompany([]wireCompany{{ID: 4242, Name: "Rivendell"}}, 99999)
 	if err == nil {
 		t.Fatal("a company the login cannot access must error, not fall back")
 	}
-	if !strings.Contains(err.Error(), "99999") || !strings.Contains(err.Error(), "17221") {
+	if !strings.Contains(err.Error(), "99999") || !strings.Contains(err.Error(), "4242") {
 		t.Errorf("error should name both what was asked for and what is available, got %q", err.Error())
 	}
 }
@@ -869,7 +869,7 @@ func TestInternal_ConfiguredCompanyIsTheOneSelected(t *testing.T) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/Auth/SignIn/"):
 			_, _ = w.Write([]byte(`{"secureLoginToken":"t","companies":[
-				{"id":17221,"name":"First"},{"id":30012,"name":"Second"}]}`))
+				{"id":4242,"name":"Rivendell"},{"id":7000,"name":"Gondor"}]}`))
 		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
 			body, _ := io.ReadAll(r.Body)
 			_ = json.Unmarshal(body, &selected)
@@ -883,17 +883,17 @@ func TestInternal_ConfiguredCompanyIsTheOneSelected(t *testing.T) {
 
 	c := NewInternal(InternalConfig{
 		Endpoint: srv.URL, Username: "u", Password: "p",
-		Company: 30012, retryBaseDur: time.Microsecond,
+		Company: 7000, retryBaseDur: time.Microsecond,
 	})
 
 	if _, err := c.ListWorkers(context.Background()); err != nil {
 		t.Fatalf("ListWorkers: %v", err)
 	}
 
-	if selected["globalCompanyId"] != float64(30012) {
-		t.Errorf("SelectCompany got %v, want the configured company 30012", selected)
+	if selected["globalCompanyId"] != float64(7000) {
+		t.Errorf("SelectCompany got %v, want the configured company 7000", selected)
 	}
-	if companyHeader != "30012" {
-		t.Errorf("kacompany = %q, want 30012 on every subsequent request", companyHeader)
+	if companyHeader != "7000" {
+		t.Errorf("kacompany = %q, want 7000 on every subsequent request", companyHeader)
 	}
 }

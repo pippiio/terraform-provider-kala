@@ -25,19 +25,19 @@ terraform {
 # If your Kala login belongs to more than one company, set company (or
 # KALA_COMPANY) too. The provider will not guess which one to write to.
 provider "kala" {
-  # company = 17221
+  # company = 4242   # "Rivendell"
 }
 
 # --- 1. A tradesperson --------------------------------------------------------
 #
 # The common case: a new hire with a manager and a start date.
 
-resource "kala_employee" "carpenter" {
+resource "kala_employee" "smith" {
   employee_number = 101
-  name            = "Sofie Kjær"
-  email           = "sofie.kjaer@example.com"
+  name            = "Gimli"
+  email           = "gimli@example.com"
 
-  title              = "Tømrer"
+  title              = "Smed"
   department         = "Montage"
   initials           = "SKJ"
   phone              = "+45 20 00 00 01"
@@ -57,8 +57,8 @@ resource "kala_employee" "carpenter" {
 
 resource "kala_employee" "site_manager" {
   employee_number = 100
-  name            = "Anders Holm"
-  email           = "anders.holm@example.com"
+  name            = "Aragorn Elessar"
+  email           = "aragorn@example.com"
 
   title      = "Byggeleder"
   department = "Montage"
@@ -78,17 +78,17 @@ resource "kala_employee" "site_manager" {
 
 locals {
   office_staff = {
-    bech = {
+    bilbo = {
       number  = 110
-      name    = "Jonas Bech"
-      email   = "jonas.bech@example.com"
+      name    = "Bilbo Baggins"
+      email   = "bilbo@example.com"
       title   = "Bogholder"
       finance = true
     }
-    sorensen = {
+    galadriel = {
       number  = 111
-      name    = "Line Sørensen"
-      email   = "line.sorensen@example.com"
+      name    = "Galadriel"
+      email   = "galadriel@example.com"
       title   = "Projektkoordinator"
       finance = false
     }
@@ -118,8 +118,8 @@ resource "kala_employee" "office" {
 
 resource "kala_employee" "departed" {
   employee_number = 120
-  name            = "Mette Lund"
-  email           = "mette.lund@example.com"
+  name            = "Boromir"
+  email           = "boromir@example.com"
   active          = false
 }
 
@@ -135,8 +135,8 @@ resource "kala_employee" "departed" {
 
 resource "kala_employee" "returning" {
   employee_number = 121
-  name            = "Kasper Nyborg"
-  email           = "kasper.nyborg@example.com"
+  name            = "Samwise Gamgee"
+  email           = "samwise@example.com"
   active          = true
 }
 
@@ -147,7 +147,7 @@ resource "kala_employee" "returning" {
 #   is_visible_in_planner
 #
 # norm_hours is JSON embedded in a string — parse it rather than comparing it:
-#   jsondecode(kala_employee.carpenter.norm_hours).normHours
+#   jsondecode(kala_employee.smith.norm_hours).normHours
 #
 # An employee whose own Kala login belongs to several companies cannot have
 # their email changed at all. The provider surfaces Kala's refusal rather than
@@ -159,10 +159,10 @@ output "adopted_rather_than_created" {
   }
 }
 
-output "carpenter_manager" {
-  value = kala_employee.carpenter.boss_name
+output "smith_manager" {
+  value = kala_employee.smith.boss_name
 }
 
-output "carpenter_norm_hours" {
-  value = try(jsondecode(kala_employee.carpenter.norm_hours).normHours, null)
+output "smith_norm_hours" {
+  value = try(jsondecode(kala_employee.smith.norm_hours).normHours, null)
 }

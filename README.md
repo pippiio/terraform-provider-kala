@@ -71,7 +71,7 @@ export KALA_PASSWORD=...
 ```hcl
 provider "kala" {
   # endpoint = "https://app.kala.dk/webapiv2"   # the default
-  # company  = 17221                            # or KALA_COMPANY
+  # company  = 4242                             # or KALA_COMPANY
   # skip_credential_validation = true           # for credential-less CI
 }
 ```
@@ -83,7 +83,7 @@ several the provider refuses to guess, and names the choices:
 ```
 kala: this login is attached to 2 companies, so which one to manage is
 ambiguous; set the provider's company attribute (or KALA_COMPANY) to one
-of: 17221 (Faurbye.io Aps), 30012 (Another Company)
+of: 4242 (Rivendell), 7000 (Gondor)
 ```
 
 Refusing is deliberate. The alternative is picking whichever company Kala lists
