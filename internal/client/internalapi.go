@@ -117,6 +117,10 @@ type InternalClient interface {
 	// internally so the value round-trips.
 	SetWorkerDateOfEmployment(ctx context.Context, workerNr int64, date string) error
 
+	// SetWorkerBoss sets which employee an employee reports to — Kala's "first
+	// boss" — and verifies the result by reading it back (ARCH1.8).
+	SetWorkerBoss(ctx context.Context, workerNr, bossNr int64) error
+
 	// SendWelcomeEmail sends Kala's onboarding email to an address.
 	//
 	// Unlike every other write here, this has no persistent effect to read
@@ -163,6 +167,12 @@ type WorkerInfo struct {
 	AllowWeekView      bool
 
 	LeaderNote string
+
+	// BossNumber is the employee number of this employee's boss, or 0 when they
+	// have none. BossName is that person's name, read-only — ChangeBoss takes
+	// the number.
+	BossNumber int64
+	BossName   string
 }
 
 // NewWorker is the input for creating an employee.
@@ -260,12 +270,32 @@ type wireWorkerInfo struct {
 	AllowWeekView      bool `json:"allowWeekView"`
 
 	LeaderNote string `json:"leaderNote"`
+
+	// firstBoss is a nested object, not a scalar, and is absent for a worker
+	// with no boss — hence the pointer. Observed 2026-09-04:
+	// {"name": "...", "workerNr": 4}.
+	FirstBoss *wireFirstBoss `json:"firstBoss"`
+}
+
+// wireFirstBoss is the nested shape carrying an employee's boss.
+type wireFirstBoss struct {
+	Name     string `json:"name"`
+	WorkerNr int64  `json:"workerNr"`
 }
 
 func (w wireWorkerInfo) toDomain() (WorkerInfo, error) {
 	if w.WorkerNr == nil || *w.WorkerNr == 0 {
 		return WorkerInfo{}, fmt.Errorf("%w: worker info has no 'workerNr' identity", ErrDecode)
 	}
+
+	// A worker with no boss has no firstBoss object at all; zero means "none"
+	// rather than "employee 0", which cannot exist.
+	var bossNumber int64
+	var bossName string
+	if w.FirstBoss != nil {
+		bossNumber, bossName = w.FirstBoss.WorkerNr, w.FirstBoss.Name
+	}
+
 	return WorkerInfo{
 		WorkerNr: *w.WorkerNr, WorkerID: w.WorkerID, Name: w.Name, Email: w.Email,
 		Initials: w.Initials, Title: w.Title, Department: w.Department,
@@ -275,6 +305,7 @@ func (w wireWorkerInfo) toDomain() (WorkerInfo, error) {
 		IsSuperUser: w.IsSuperUser, IsFinance: w.IsFinance,
 		IsVisibleInPlanner: w.IsVisibleInPlanner, AllowWeekView: w.AllowWeekView,
 		LeaderNote: w.LeaderNote,
+		BossNumber: bossNumber, BossName: bossName,
 	}, nil
 }
 

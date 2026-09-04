@@ -205,12 +205,29 @@ func checkEmployeeFieldUpstream(t *testing.T, number int64, field string, want s
 			got = info.Phone
 		case "email":
 			got = info.Email
+		case "name":
+			got = info.Name
 		default:
 			return fmt.Errorf("checkEmployeeFieldUpstream: unknown field %q", field)
 		}
 
 		if got != want {
 			return fmt.Errorf("employee %d: %s = %q upstream, want %q", number, field, got, want)
+		}
+		return nil
+	}
+}
+
+// checkEmployeeBoss asserts who Kala says the employee reports to.
+func checkEmployeeBoss(t *testing.T, number, wantBoss int64) resource.TestCheckFunc {
+	return func(*terraform.State) error {
+		info, err := accInternalClient(t).GetWorkerInfo(context.Background(), number)
+		if err != nil {
+			return fmt.Errorf("reading worker info for %d: %w", number, err)
+		}
+		if info.BossNumber != wantBoss {
+			return fmt.Errorf("employee %d: boss = %d upstream, want %d",
+				number, info.BossNumber, wantBoss)
 		}
 		return nil
 	}
@@ -421,9 +438,9 @@ func TestAccEmployee_import(t *testing.T) {
 	})
 }
 
-// A rename has no endpoint behind it. The provider must warn rather than
-// silently pretend, and the apply must still succeed and converge.
-func TestAccEmployee_renameWarnsAndConverges(t *testing.T) {
+// A rename is a real write via ChangeWorkerName. The point of asserting it
+// upstream is that this resource previously reported renames it never made.
+func TestAccEmployee_renameIsWrittenUpstream(t *testing.T) {
 	if os.Getenv("TF_ACC") == "" {
 		t.Skip("acceptance test; set TF_ACC=1 to run")
 	}
@@ -441,10 +458,49 @@ func TestAccEmployee_renameWarnsAndConverges(t *testing.T) {
 			},
 			{
 				Config: accConfigEmployee(number, "Acceptance Test Renamed", email, ""),
-				// The plan must be empty afterwards even though Kala kept the
-				// old name: a warned no-op that left a perpetual diff would be
-				// worse than the warning.
-				Check: resource.TestCheckResourceAttr("kala_employee.test", "name", "Acceptance Test Renamed"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("kala_employee.test", "name", "Acceptance Test Renamed"),
+					// State agreeing with config proves nothing here — the old
+					// behaviour did exactly that while Kala kept the old name.
+					checkEmployeeFieldUpstream(t, number, "name", "Acceptance Test Renamed"),
+				),
+			},
+			// And back, so the suite leaves the record as it found it.
+			{
+				Config: accConfigEmployee(number, "Acceptance Test Employee", email, ""),
+				Check:  checkEmployeeFieldUpstream(t, number, "name", "Acceptance Test Employee"),
+			},
+		},
+	})
+}
+
+// boss_employee_number is written through ChangeBoss and read back from the
+// nested firstBoss object, so both halves of an unusually shaped field are
+// exercised against the real API.
+func TestAccEmployee_bossIsWrittenUpstream(t *testing.T) {
+	if os.Getenv("TF_ACC") == "" {
+		t.Skip("acceptance test; set TF_ACC=1 to run")
+	}
+	testAccPreCheck(t)
+
+	number := accNumber(t, envAccNumber)
+	boss := accNumber(t, envAccAltNumber)
+	email := accEmailFor(t, number)
+	name := "Acceptance Test Employee"
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             checkDestroyDeactivates(t, number),
+		Steps: []resource.TestStep{
+			{
+				Config: accConfigEmployee(number, name, email,
+					fmt.Sprintf("  boss_employee_number = %d\n", boss)),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("kala_employee.test",
+						"boss_employee_number", strconv.FormatInt(boss, 10)),
+					resource.TestCheckResourceAttrSet("kala_employee.test", "boss_name"),
+					checkEmployeeBoss(t, number, boss),
+				),
 			},
 		},
 	})

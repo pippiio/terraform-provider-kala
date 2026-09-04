@@ -54,6 +54,8 @@ type employeeResourceModel struct {
 	FlexStartDate      types.String `tfsdk:"flex_start_date"`
 	NormHours          types.String `tfsdk:"norm_hours"`
 	LeaderNote         types.String `tfsdk:"leader_note"`
+	BossNumber         types.Int64  `tfsdk:"boss_employee_number"`
+	BossName           types.String `tfsdk:"boss_name"`
 	IsLeader           types.Bool   `tfsdk:"is_leader"`
 	IsPlanner          types.Bool   `tfsdk:"is_planner"`
 	IsSuperUser        types.Bool   `tfsdk:"is_super_user"`
@@ -88,9 +90,10 @@ func (r *employeeResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			},
 			"name": schema.StringAttribute{
 				Required: true,
-				MarkdownDescription: "Full name. Sent when the employee is created. Kala exposes no endpoint " +
-					"to rename an existing employee, so changing this on an adopted or existing employee " +
-					"produces a warning rather than a rename.",
+				MarkdownDescription: "Full name. Sent when the employee is created, refreshed from " +
+					"`WorkerInfo` on every read, and updated in place via `ChangeWorkerName` when " +
+					"changed — so it is a fully managed attribute with real drift detection. An " +
+					"adopted employee whose name differs from the configuration is renamed to match.",
 			},
 			"email": schema.StringAttribute{
 				Required: true,
@@ -149,6 +152,19 @@ func (r *employeeResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 					"It is passed through verbatim rather than unwrapped, because the shape is undocumented " +
 					"and may vary. Parse it with `jsondecode()` if you need the value.",
 			},
+			"boss_employee_number": schema.Int64Attribute{
+				Optional: true, Computed: true,
+				MarkdownDescription: "The `employee_number` of this employee's manager — Kala calls " +
+					"this the *first boss*. Omitting it leaves whatever Kala already holds, like " +
+					"every other optional attribute here.",
+				PlanModifiers: []planmodifier.Int64{int64planmodifier.UseStateForUnknown()},
+			},
+			"boss_name": schema.StringAttribute{
+				Computed: true,
+				MarkdownDescription: "The manager's name, as Kala reports it. Read-only — set " +
+					"`boss_employee_number` to change who it is.",
+			},
+
 			"is_leader":  optionalComputedBool("Whether the employee is a leader."),
 			"is_planner": optionalComputedBool("Whether the employee has planner rights."),
 			"is_finance": optionalComputedBool("Whether the employee has finance rights."),
@@ -229,18 +245,10 @@ func (r *employeeResource) Create(ctx context.Context, req resource.CreateReques
 		// --- adopt ---
 		plan.Adopted = types.BoolValue(true)
 
-		if existing.Name != "" && existing.Name != plan.Name.ValueString() {
-			resp.Diagnostics.AddWarning(
-				"Adopted an existing employee whose name differs from the configuration",
-				fmt.Sprintf(
-					"Employee %d already exists in Kala as %q, but the configuration says %q.\n\n"+
-						"Kala provides no endpoint to rename an employee, so the name in Kala is "+
-						"unchanged and the configured value is recorded in state only. Update your "+
-						"configuration to match, or rename the employee in the Kala interface.",
-					number, existing.Name, plan.Name.ValueString(),
-				),
-			)
-		}
+		// Seed the prior name from upstream so convergence renames only on a
+		// real difference. An adopted employee whose name differs from the
+		// configuration is now renamed rather than warned about.
+		prior.Name = types.StringValue(existing.Name)
 
 		if !existing.IsValidated && wantActive {
 			if err := internal.SetWorkerValidated(ctx, number, true); err != nil {
@@ -277,9 +285,10 @@ func (r *employeeResource) Create(ctx context.Context, req resource.CreateReques
 		// --- create ---
 		plan.Adopted = types.BoolValue(false)
 
-		// SignUp carries the email, so seeding it here stops convergence from
-		// issuing a redundant second write.
+		// SignUp carries the email and the name, so seeding both here stops
+		// convergence from issuing redundant second writes.
 		prior.Email = plan.Email
+		prior.Name = plan.Name
 
 		if _, err := internal.CreateWorker(ctx, client.NewWorker{
 			Number: number,
@@ -395,19 +404,6 @@ func (r *employeeResource) Update(ctx context.Context, req resource.UpdateReques
 		}
 	}
 
-	if plan.Name.ValueString() != state.Name.ValueString() {
-		resp.Diagnostics.AddWarning(
-			"Employee name cannot be changed through Kala's API",
-			fmt.Sprintf(
-				"The configuration changes employee %d's name from %q to %q, but Kala exposes no "+
-					"endpoint to rename an employee. The new value is recorded in Terraform state "+
-					"only — the name in Kala is unchanged. Rename them in the Kala interface to "+
-					"make this real.",
-				number, state.Name.ValueString(), plan.Name.ValueString(),
-			),
-		)
-	}
-
 	if !r.applyFieldChanges(ctx, internal, number, plan, state, &resp.Diagnostics) {
 		return
 	}
@@ -486,18 +482,18 @@ func (r *employeeResource) ImportState(ctx context.Context, req resource.ImportS
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("employee_number"), number)...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("adopted"), true)...)
 
-	// This warning used to say email could not be imported. That stopped being
-	// true once WorkerInfo was wired in: name and email both come back from the
-	// read, and an acceptance test now verifies they survive an import
-	// round-trip. What is worth flagging is the one value that cannot be
-	// reconciled afterwards.
+	// This warning once said email could not be imported, then that name could
+	// not be applied. Both stopped being true — WorkerInfo returns email, and
+	// ChangeWorkerName renames — and an acceptance test verifies each survives
+	// an import round-trip. What remains worth saying is the one attribute that
+	// genuinely is not part of the record.
 	resp.Diagnostics.AddWarning(
-		"Check the imported name against your configuration",
-		"name and email are recovered from Kala's record. If your configuration gives a different "+
-			"name, Kala has no rename endpoint — the next apply will warn and Kala will keep the "+
-			"name it already holds.\n\n"+
-			"send_welcome_email is not part of the record and cannot be imported; it defaults to "+
-			"true and only ever takes effect if this resource creates an employee.",
+		"send_welcome_email could not be imported",
+		"Every other attribute is recovered from Kala's record. send_welcome_email is not part of "+
+			"that record: it describes what Terraform should do at creation, not a property of the "+
+			"employee.\n\n"+
+			"It defaults to true. Set it explicitly to false if this resource must never send mail, "+
+			"including if it were ever to recreate the employee.",
 	)
 }
 
@@ -544,6 +540,11 @@ func (r *employeeResource) applyFieldChanges(
 		{client.FieldLicensePlate, plan.LicensePlate, state.LicensePlate, "license_plate"},
 		{client.FieldDepartment, plan.Department, state.Department, "department"},
 		{client.FieldLeaderNote, plan.LeaderNote, state.LeaderNote, "leader_note"},
+		// ChangeWorkerName exists after all, so a rename is a real write rather
+		// than the warned no-op this resource used to report. Putting it here
+		// rather than only in Update means an adopted employee whose name
+		// differs from the configuration converges too.
+		{client.FieldName, plan.Name, state.Name, "name"},
 	}
 	for _, f := range stringFields {
 		// Unknown or null means the user left it unset and Terraform will fill
@@ -588,6 +589,16 @@ func (r *employeeResource) applyFieldChanges(
 	if !plan.Email.IsUnknown() && !plan.Email.IsNull() && !plan.Email.Equal(state.Email) {
 		if err := c.SetWorkerEmail(ctx, number, plan.Email.ValueString()); err != nil {
 			diags.AddAttributeError(path.Root("email"), "Could not update email", err.Error())
+			return false
+		}
+	}
+
+	// The boss is neither a string field nor a role flag: ChangeBoss takes an
+	// employee number, so it needs its own write like email and the date do.
+	if !plan.BossNumber.IsUnknown() && !plan.BossNumber.IsNull() && !plan.BossNumber.Equal(state.BossNumber) {
+		if err := c.SetWorkerBoss(ctx, number, plan.BossNumber.ValueInt64()); err != nil {
+			diags.AddAttributeError(path.Root("boss_employee_number"),
+				"Could not update boss_employee_number", err.Error())
 			return false
 		}
 	}
@@ -657,18 +668,15 @@ func applyWorkerInfo(m *employeeResourceModel, i client.WorkerInfo) {
 	// return the settings list. Refreshing it gives real drift detection.
 	m.Email = types.StringValue(i.Email)
 
-	// name is deliberately NOT refreshed for an employee already under
-	// management. Kala has no rename endpoint, so a configured name that
-	// differs from the stored one is a warned no-op; overwriting it from the
-	// read would turn that warning into a diff the operator can never resolve.
-	//
-	// Import is the one case with no prior name to protect. It arrives with no
-	// state and no configuration, and leaving a required attribute null would
-	// strand the imported resource. Filling it only when empty recovers the
-	// real name at import without ever fighting configuration afterwards.
-	if m.Name.IsNull() || m.Name.IsUnknown() || m.Name.ValueString() == "" {
-		m.Name = types.StringValue(i.Name)
-	}
+	// name is refreshed unconditionally, exactly like email. ChangeWorkerName
+	// makes a rename a real write, so the configured value converges upstream
+	// rather than diverging from it — which is what makes refreshing safe here.
+	// Before that endpoint was known, refreshing would have caused a perpetual
+	// diff the operator could not resolve.
+	m.Name = types.StringValue(i.Name)
+
+	m.BossNumber = types.Int64Value(i.BossNumber)
+	m.BossName = types.StringValue(i.BossName)
 
 	m.Title = types.StringValue(i.Title)
 	m.Phone = types.StringValue(i.Phone)

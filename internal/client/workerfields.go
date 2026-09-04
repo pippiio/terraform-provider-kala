@@ -15,12 +15,15 @@ import (
 // rather than normalised, because getting either wrong fails silently:
 //
 //  1. The identifier key is "workerNr" on the Set* endpoints but "workerID" on
-//     the Change* endpoints.
+//     the Change* endpoints — except ChangeWorkerName, which uses "workerId",
+//     and ChangeBoss, which uses "workerNr".
 //  2. The Set* paths carry a trailing slash; ChangeWorkerDepartment,
-//     ChangeLeaderNote, and ChangeDateOfEmployment do not.
+//     ChangeLeaderNote, and ChangeDateOfEmployment do not — but
+//     ChangeWorkerName and ChangeBoss do.
 //
-// Both are captured per-endpoint in the table below so no caller has to
-// remember them.
+// In other words there is no rule, only a table. Both properties are captured
+// per-endpoint below so no caller has to remember them, and each entry records
+// what was observed rather than what the pattern would predict.
 
 // workerFieldSpec describes one field-setting endpoint.
 type workerFieldSpec struct {
@@ -52,6 +55,7 @@ const (
 	FieldLicensePlate WorkerField = "license_plate"
 	FieldDepartment   WorkerField = "department"
 	FieldLeaderNote   WorkerField = "leader_note"
+	FieldName         WorkerField = "name"
 )
 
 var workerFieldSpecs = map[WorkerField]workerFieldSpec{
@@ -79,6 +83,16 @@ var workerFieldSpecs = map[WorkerField]workerFieldSpec{
 	FieldLeaderNote: {
 		endpoint: "/api/ChangeLeaderNote", idKey: "workerID", valueKey: "leaderNote",
 		readBack: func(w WorkerInfo) string { return w.LeaderNote },
+	},
+	// Breaks BOTH of the patterns above: a Change* endpoint that keeps the
+	// trailing slash and spells the identifier "workerId". Probed 2026-09-04,
+	// the endpoint in fact accepted every combination tried — with and without
+	// the slash, "workerId" and "workerID" alike — but what is sent here is
+	// what Kala's own web client sends, which is the only variant it is safe to
+	// assume will keep working.
+	FieldName: {
+		endpoint: "/api/ChangeWorkerName/", idKey: "workerId", valueKey: "newName",
+		readBack: func(w WorkerInfo) string { return w.Name },
 	},
 }
 
@@ -212,6 +226,40 @@ func isISODate(s string) bool {
 }
 
 // postJSON sends an authenticated JSON POST to the internal API.
+// SetWorkerBoss sets which employee an employee reports to, and VERIFIES the
+// result by reading it back (ARCH1.8).
+//
+// Kala calls this the "first boss". It is the one worker field that is neither
+// a string nor a role flag, which is why it is not in the table above:
+// ChangeBoss takes an employee number and reads back as a nested object.
+//
+// It is also a third spelling of the identifier — "workerNr", where the other
+// Change* endpoints use "workerID". Observed 2026-09-04.
+func (c *internalAPI) SetWorkerBoss(ctx context.Context, workerNr, bossNr int64) error {
+	if bossNr == workerNr {
+		// Kala's own interface cannot express this, and the read-back would
+		// look like a success. Refusing here is cheaper than a record that
+		// reports to itself.
+		return fmt.Errorf("kala: employee %d cannot be their own boss", workerNr)
+	}
+
+	payload := map[string]any{"workerNr": workerNr, "bossNr": bossNr}
+	if err := c.postJSON(ctx, "/api/ChangeBoss/", payload); err != nil {
+		return fmt.Errorf("kala: setting the boss of worker %d to %d: %w", workerNr, bossNr, err)
+	}
+
+	info, err := c.GetWorkerInfo(ctx, workerNr)
+	if err != nil {
+		return fmt.Errorf("kala: could not verify the boss of worker %d: %w", workerNr, err)
+	}
+	if info.BossNumber != bossNr {
+		return fmt.Errorf(
+			"kala: setting the boss of worker %d reported success but reads back as %d, expected %d",
+			workerNr, info.BossNumber, bossNr)
+	}
+	return nil
+}
+
 func (c *internalAPI) postJSON(ctx context.Context, endpoint string, payload map[string]any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {

@@ -116,10 +116,15 @@ reading it back, so it reports an error rather than a false success. Retrying
 with a different address will not help; those records appear to be editable only
 in Kala's own interface.
 
-**`name` cannot be changed, only read.** Kala has no rename endpoint. Changing
-`name` on an existing employee warns and Kala keeps the name it holds. Import
-recovers the stored name, so an imported resource whose configuration disagrees
-will warn on the next apply rather than silently diverge.
+**Renaming works, through an endpoint the documentation does not mention.**
+`ChangeWorkerName` was supplied from a browser session on 2026-09-04 and
+verified against the live tenant. `name` is therefore fully managed, with drift
+detection, and an adopted employee whose name differs from the configuration is
+renamed to match rather than warned about. `boss_employee_number` arrived the
+same way, via `ChangeBoss`.
+
+Both endpoints are undocumented, so both are covered by acceptance tests that
+assert the change upstream rather than in Terraform state.
 
 ## Development
 

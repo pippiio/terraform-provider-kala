@@ -19,6 +19,11 @@ type fieldMock struct {
 	bodies   []map[string]any
 	info     map[string]any
 	rejectAt string
+
+	// noReflect accepts writes with HTTP 200 but does not apply them to the
+	// WorkerInfo served back — the "reported success, changed nothing" shape
+	// that read-back verification exists to catch.
+	noReflect bool
 }
 
 func newFieldMock(t *testing.T) *fieldMock {
@@ -33,13 +38,17 @@ func newFieldMock(t *testing.T) *fieldMock {
 		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
 			_, _ = w.Write([]byte(`{"token":"session-token"}`))
 			return
-		case strings.Contains(r.URL.Path, "WorkerInfo"):
-			_ = json.NewEncoder(w).Encode(m.info)
+		}
+
+		// Checked before the WorkerInfo branch so a test can refuse the
+		// verification read as well as the write.
+		if m.rejectAt != "" && strings.Contains(r.URL.Path, m.rejectAt) {
+			w.WriteHeader(http.StatusForbidden)
 			return
 		}
 
-		if m.rejectAt != "" && strings.Contains(r.URL.Path, m.rejectAt) {
-			w.WriteHeader(http.StatusForbidden)
+		if strings.Contains(r.URL.Path, "WorkerInfo") {
+			_ = json.NewEncoder(w).Encode(m.info)
 			return
 		}
 
@@ -51,11 +60,21 @@ func newFieldMock(t *testing.T) *fieldMock {
 		m.bodies = append(m.bodies, parsed)
 
 		// Reflect the write into the WorkerInfo the mock serves back.
+		if m.noReflect {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		for k, v := range parsed {
 			switch k {
 			case "phone", "title", "initials", "licensePlate", "department", "leaderNote",
 				"isLeader", "isFinance", "isPlanner":
 				m.info[k] = v
+			case "newName":
+				m.info["name"] = v
+			case "bossNr":
+				// Reflected as the nested object Kala actually returns, so the
+				// read-back path is exercised rather than assumed.
+				m.info["firstBoss"] = map[string]any{"name": "The Boss", "workerNr": v}
 			case "newDateOfEmployment":
 				if s, ok := v.(string); ok {
 					m.info["dateOfEmployment"] = strings.SplitN(s, "T", 2)[0]
@@ -469,5 +488,139 @@ func TestSendWelcomeEmail_NeedsCredentials(t *testing.T) {
 	c := NewInternal(InternalConfig{Endpoint: "https://example.test"})
 	if err := c.SendWelcomeEmail(context.Background(), "a@b.c"); err == nil {
 		t.Error("want a credentials error")
+	}
+}
+
+// --- name and boss --------------------------------------------------------
+
+// ChangeWorkerName breaks BOTH Change* patterns: it keeps the trailing slash
+// and spells the identifier "workerId". Probing found Kala accepts every
+// variant, but what is sent here is what Kala's own web client sends — the only
+// variant it is safe to assume will keep working. Pinned so a tidy-up cannot
+// quietly "correct" it into the general rule.
+func TestSetWorkerName_UsesTheObservedPathAndIdentifierKey(t *testing.T) {
+	m := newFieldMock(t)
+
+	if err := m.client().SetWorkerField(context.Background(), 3, FieldName, "New Name"); err != nil {
+		t.Fatalf("SetWorkerField(name): %v", err)
+	}
+
+	if len(m.paths) != 1 || m.paths[0] != "/api/ChangeWorkerName/" {
+		t.Errorf("paths = %v, want /api/ChangeWorkerName/ WITH the trailing slash", m.paths)
+	}
+	if _, ok := m.bodies[0]["workerId"]; !ok {
+		t.Errorf("body = %v, want the identifier under \"workerId\" — not workerID, not workerNr",
+			m.bodies[0])
+	}
+	if m.bodies[0]["newName"] != "New Name" {
+		t.Errorf("body = %v, want newName carrying the value", m.bodies[0])
+	}
+}
+
+// ARCH1.8: a rename is only real if it reads back. This is the exact shape
+// SetEmailNew was caught in — HTTP 200, nothing changed.
+func TestSetWorkerName_FailsWhenUnverified(t *testing.T) {
+	m := newFieldMock(t)
+	m.info["name"] = "Old Name"
+	m.noReflect = true
+
+	err := m.client().SetWorkerField(context.Background(), 3, FieldName, "New Name")
+	if err == nil {
+		t.Fatal("an unverified rename must fail")
+	}
+	if !strings.Contains(err.Error(), "reads back as") {
+		t.Errorf("error should report the mismatch, got %q", err.Error())
+	}
+}
+
+// ChangeBoss is a third spelling: "workerNr", where the other Change* endpoints
+// use "workerID". It also reads back as a nested object rather than a scalar.
+func TestSetWorkerBoss_SendsWorkerNrAndVerifiesTheNestedReadBack(t *testing.T) {
+	m := newFieldMock(t)
+
+	if err := m.client().SetWorkerBoss(context.Background(), 3, 4); err != nil {
+		t.Fatalf("SetWorkerBoss: %v", err)
+	}
+
+	if len(m.paths) != 1 || m.paths[0] != "/api/ChangeBoss/" {
+		t.Errorf("paths = %v, want /api/ChangeBoss/", m.paths)
+	}
+	if _, ok := m.bodies[0]["workerNr"]; !ok {
+		t.Errorf("body = %v, want the identifier under \"workerNr\"", m.bodies[0])
+	}
+	if m.bodies[0]["bossNr"] != float64(4) {
+		t.Errorf("body = %v, want bossNr = 4", m.bodies[0])
+	}
+}
+
+func TestSetWorkerBoss_FailsWhenUnverified(t *testing.T) {
+	m := newFieldMock(t)
+	m.info["firstBoss"] = map[string]any{"name": "Someone Else", "workerNr": 9}
+	m.noReflect = true
+
+	err := m.client().SetWorkerBoss(context.Background(), 3, 4)
+	if err == nil {
+		t.Fatal("an unverified boss change must fail")
+	}
+	if !strings.Contains(err.Error(), "reads back as 9") {
+		t.Errorf("error should name what it actually read, got %q", err.Error())
+	}
+}
+
+// An employee reporting to themselves is refused locally. The read-back would
+// report success, so the guard cannot rely on it.
+func TestSetWorkerBoss_RefusesSelfReference(t *testing.T) {
+	m := newFieldMock(t)
+
+	if err := m.client().SetWorkerBoss(context.Background(), 3, 3); err == nil {
+		t.Fatal("an employee must not be able to be their own boss")
+	}
+	if len(m.paths) != 0 {
+		t.Errorf("the guard must reject before calling Kala, got requests to %v", m.paths)
+	}
+}
+
+// A worker with no boss has no firstBoss object at all. Zero means none, not
+// "employee 0", which cannot exist.
+func TestWorkerInfo_WithoutABossDecodesToZero(t *testing.T) {
+	m := newFieldMock(t)
+
+	info, err := m.client().GetWorkerInfo(context.Background(), 3)
+	if err != nil {
+		t.Fatalf("GetWorkerInfo: %v", err)
+	}
+	if info.BossNumber != 0 || info.BossName != "" {
+		t.Errorf("BossNumber/BossName = %d/%q, want 0 and empty for a worker with no boss",
+			info.BossNumber, info.BossName)
+	}
+}
+
+// A refused ChangeBoss must surface as an error, not be swallowed into a
+// read-back comparison against a value that never changed.
+func TestSetWorkerBoss_PropagatesHTTPFailure(t *testing.T) {
+	m := newFieldMock(t)
+	m.rejectAt = "ChangeBoss"
+
+	err := m.client().SetWorkerBoss(context.Background(), 3, 4)
+	if err == nil {
+		t.Fatal("a refused boss change must error")
+	}
+	if !strings.Contains(err.Error(), "setting the boss") {
+		t.Errorf("error should name the operation, got %q", err.Error())
+	}
+}
+
+// If the write lands but verification cannot run, that is not a success: an
+// unverifiable write is reported as such rather than assumed good (ARCH1.8).
+func TestSetWorkerBoss_UnverifiableWriteIsAnError(t *testing.T) {
+	m := newFieldMock(t)
+	m.rejectAt = "WorkerInfo"
+
+	err := m.client().SetWorkerBoss(context.Background(), 3, 4)
+	if err == nil {
+		t.Fatal("a boss change that cannot be verified must error")
+	}
+	if !strings.Contains(err.Error(), "could not verify") {
+		t.Errorf("error should say verification failed, got %q", err.Error())
 	}
 }

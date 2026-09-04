@@ -52,6 +52,10 @@ type fakeInternal struct {
 	dateSet   string
 	fieldErr  error
 
+	// boss writes
+	bossSets []bossSetCall
+	bossErr  error
+
 	// WorkerInfo enrichment
 	info      client.WorkerInfo
 	infoErr   error
@@ -67,6 +71,22 @@ type setValidatedCall struct {
 type emailSetCall struct {
 	number int64
 	email  string
+}
+
+// fieldWrites returns the values written for one field, in order.
+func fieldWrites(f *fakeInternal, field client.WorkerField) []string {
+	var out []string
+	for _, c := range f.fieldSets {
+		if c.field == field {
+			out = append(out, c.value)
+		}
+	}
+	return out
+}
+
+type bossSetCall struct {
+	workerNr int64
+	bossNr   int64
 }
 
 type fieldSetCall struct {
@@ -147,6 +167,11 @@ func (f *fakeInternal) SendWelcomeEmail(_ context.Context, email string) error {
 func (f *fakeInternal) SetWorkerField(_ context.Context, _ int64, field client.WorkerField, v string) error {
 	f.fieldSets = append(f.fieldSets, fieldSetCall{field, v})
 	return f.fieldErr
+}
+
+func (f *fakeInternal) SetWorkerBoss(_ context.Context, workerNr, bossNr int64) error {
+	f.bossSets = append(f.bossSets, bossSetCall{workerNr, bossNr})
+	return f.bossErr
 }
 
 func (f *fakeInternal) SetWorkerRole(_ context.Context, _ int64, role client.WorkerRole, v bool) error {
@@ -247,6 +272,8 @@ func employeeValue(t *testing.T, m employeeResourceModel) tftypes.Value {
 		"flex_start_date":       tftypes.NewValue(tftypes.String, str(m.FlexStartDate)),
 		"norm_hours":            tftypes.NewValue(tftypes.String, str(m.NormHours)),
 		"leader_note":           tftypes.NewValue(tftypes.String, str(m.LeaderNote)),
+		"boss_employee_number":  tftypes.NewValue(tftypes.Number, i64(m.BossNumber)),
+		"boss_name":             tftypes.NewValue(tftypes.String, str(m.BossName)),
 		"is_leader":             tftypes.NewValue(tftypes.Bool, bl(m.IsLeader)),
 		"is_planner":            tftypes.NewValue(tftypes.Bool, bl(m.IsPlanner)),
 		"is_super_user":         tftypes.NewValue(tftypes.Bool, bl(m.IsSuperUser)),
@@ -440,7 +467,9 @@ func TestCreateEmployee_AdoptsAlreadyActiveEmployeeWithoutWriting(t *testing.T) 
 	}
 }
 
-func TestCreateEmployee_AdoptedNameMismatchWarns(t *testing.T) {
+// Adoption converges the name rather than warning about it. ChangeWorkerName
+// exists, so the configuration is authoritative here like every other attribute.
+func TestCreateEmployee_AdoptedNameMismatchIsRenamed(t *testing.T) {
 	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "Actual Name", IsValidated: true})
 	r := newEmployeeResource(fi)
 
@@ -448,12 +477,26 @@ func TestCreateEmployee_AdoptedNameMismatchWarns(t *testing.T) {
 	resp := &resource.CreateResponse{State: emptyEmployeeState(t)}
 	r.Create(context.Background(), resource.CreateRequest{Plan: employeePlan(t, m)}, resp)
 
-	text := diagsText(resp.Diagnostics)
-	if !strings.Contains(text, "Actual Name") || !strings.Contains(text, "Configured Name") {
-		t.Errorf("warning should show both names, got: %s", text)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("adoption failed: %s", diagsText(resp.Diagnostics))
 	}
-	if !strings.Contains(text, "rename") {
-		t.Errorf("warning should explain that renaming is impossible, got: %s", text)
+	if got := fieldWrites(fi, client.FieldName); len(got) != 1 || got[0] != "Configured Name" {
+		t.Errorf("name writes = %v, want exactly one rename to the configured name", got)
+	}
+}
+
+// The counterpart: an adopted employee whose name already matches must not be
+// renamed. A redundant write is a write, and every one of them can fail.
+func TestCreateEmployee_AdoptedMatchingNameIsNotRewritten(t *testing.T) {
+	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "Same Name", IsValidated: true})
+	r := newEmployeeResource(fi)
+
+	m := employeeModelFor(3, "Same Name", "e@example.com", true)
+	resp := &resource.CreateResponse{State: emptyEmployeeState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: employeePlan(t, m)}, resp)
+
+	if got := fieldWrites(fi, client.FieldName); len(got) != 0 {
+		t.Errorf("name writes = %v, want none when the name already matches", got)
 	}
 }
 
@@ -627,7 +670,8 @@ func TestUpdateEmployee_ActivationChangeIsWritten(t *testing.T) {
 	}
 }
 
-func TestUpdateEmployee_NameChangeWarnsRatherThanSilentlyFailing(t *testing.T) {
+// A rename is a real write via ChangeWorkerName, not a warned no-op.
+func TestUpdateEmployee_NameChangeIsWrittenUpstream(t *testing.T) {
 	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "Old", IsValidated: true})
 	r := newEmployeeResource(fi)
 
@@ -639,11 +683,34 @@ func TestUpdateEmployee_NameChangeWarnsRatherThanSilentlyFailing(t *testing.T) {
 		Plan: employeePlan(t, plan), State: employeeState(t, state),
 	}, resp)
 
-	if resp.Diagnostics.WarningsCount() == 0 {
-		t.Fatal("a name change must warn — Kala cannot rename employees")
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("update failed: %s", diagsText(resp.Diagnostics))
 	}
-	if !strings.Contains(diagsText(resp.Diagnostics), "no endpoint to rename") {
-		t.Errorf("warning should explain why, got: %s", diagsText(resp.Diagnostics))
+	if got := fieldWrites(fi, client.FieldName); len(got) != 1 || got[0] != "New" {
+		t.Errorf("name writes = %v, want exactly one rename to %q", got, "New")
+	}
+}
+
+// A failed rename must fail the apply. Reporting a rename that did not happen
+// is the same class of lie as a silent deactivation failure.
+func TestUpdateEmployee_FailedRenamePropagates(t *testing.T) {
+	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "Old", IsValidated: true})
+	fi.fieldErr = errors.New("rename rejected")
+	r := newEmployeeResource(fi)
+
+	state := employeeModelFor(3, "Old", "e@example.com", true)
+	plan := employeeModelFor(3, "New", "e@example.com", true)
+
+	resp := &resource.UpdateResponse{State: emptyEmployeeState(t)}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan: employeePlan(t, plan), State: employeeState(t, state),
+	}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a failed rename must fail the apply")
+	}
+	if !strings.Contains(diagsText(resp.Diagnostics), "rename rejected") {
+		t.Errorf("diagnostic should carry the cause, got: %s", diagsText(resp.Diagnostics))
 	}
 }
 
@@ -740,12 +807,11 @@ func TestImportEmployee_ByNumber(t *testing.T) {
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("import failed: %s", diagsText(resp.Diagnostics))
 	}
-	// email and name ARE recovered on import — an acceptance test verifies the
-	// round-trip. The warning's job is the value that cannot be reconciled
-	// afterwards: a configured name Kala has no endpoint to apply.
-	if !strings.Contains(diagsText(resp.Diagnostics), "no rename endpoint") {
-		t.Errorf("import should warn about the name that cannot be applied, got: %s",
-			diagsText(resp.Diagnostics))
+	// Every attribute on the record is recovered on import — acceptance tests
+	// verify the round-trip. send_welcome_email is the only one that is not part
+	// of the record, so it is the only one worth warning about.
+	if !strings.Contains(diagsText(resp.Diagnostics), "send_welcome_email") {
+		t.Errorf("import should warn about send_welcome_email, got: %s", diagsText(resp.Diagnostics))
 	}
 }
 
@@ -1028,16 +1094,28 @@ func TestApplyWorkerInfo_FillsNameWhenEmpty(t *testing.T) {
 	}
 }
 
-// The managed case is the opposite: Kala has no rename endpoint, so a
-// configured name that differs is a warned no-op. Refreshing it from the read
-// would turn that warning into a diff the operator could never resolve.
-func TestApplyWorkerInfo_NeverOverwritesAConfiguredName(t *testing.T) {
-	m := employeeResourceModel{Name: types.StringValue("Name From Configuration")}
-	applyWorkerInfo(&m, client.WorkerInfo{WorkerNr: 3, Name: "Stale Name In Kala"})
+// name refreshes like any other managed attribute now that ChangeWorkerName
+// makes the configured value reachable. Refreshing is what turns a name changed
+// in Kala's own interface into visible drift instead of a silent divergence.
+func TestApplyWorkerInfo_RefreshesNameForDriftDetection(t *testing.T) {
+	m := employeeResourceModel{Name: types.StringValue("Name In State")}
+	applyWorkerInfo(&m, client.WorkerInfo{WorkerNr: 3, Name: "Changed In Kala"})
 
-	if m.Name.ValueString() != "Name From Configuration" {
-		t.Errorf("name = %q, want the configured value preserved — Kala cannot rename, "+
-			"so refreshing it would cause a perpetual diff", m.Name.ValueString())
+	if m.Name.ValueString() != "Changed In Kala" {
+		t.Errorf("name = %q, want the upstream value so the change shows as drift", m.Name.ValueString())
+	}
+}
+
+// The boss comes back as a nested object; absent means no boss, not employee 0.
+func TestApplyWorkerInfo_PopulatesBoss(t *testing.T) {
+	m := employeeResourceModel{}
+	applyWorkerInfo(&m, client.WorkerInfo{WorkerNr: 3, BossNumber: 4, BossName: "The Boss"})
+
+	if m.BossNumber.ValueInt64() != 4 {
+		t.Errorf("boss_employee_number = %d, want 4", m.BossNumber.ValueInt64())
+	}
+	if m.BossName.ValueString() != "The Boss" {
+		t.Errorf("boss_name = %q, want %q", m.BossName.ValueString(), "The Boss")
 	}
 }
 
@@ -1760,5 +1838,71 @@ func TestResolveUnknowns_ReplacesEveryUnknownWithNull(t *testing.T) {
 	// Known values must survive untouched.
 	if m.EmployeeNumber.ValueInt64() != 55 || m.Name.ValueString() != "Radagast the Brown" {
 		t.Error("resolveUnknowns altered a known value")
+	}
+}
+
+// --- boss ------------------------------------------------------------------
+
+func TestUpdateEmployee_BossChangeIsWrittenUpstream(t *testing.T) {
+	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "N", IsValidated: true})
+	r := newEmployeeResource(fi)
+
+	state := employeeModelFor(3, "N", "e@example.com", true)
+	plan := employeeModelFor(3, "N", "e@example.com", true)
+	plan.BossNumber = types.Int64Value(4)
+
+	resp := &resource.UpdateResponse{State: emptyEmployeeState(t)}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan: employeePlan(t, plan), State: employeeState(t, state),
+	}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("update failed: %s", diagsText(resp.Diagnostics))
+	}
+	if len(fi.bossSets) != 1 || fi.bossSets[0].bossNr != 4 {
+		t.Errorf("boss writes = %+v, want one write setting boss 4", fi.bossSets)
+	}
+}
+
+// An unchanged boss must not be rewritten. Every redundant write is a write
+// that can fail, and this one reads back through a nested object.
+func TestUpdateEmployee_UnchangedBossIsNotRewritten(t *testing.T) {
+	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "N", IsValidated: true})
+	r := newEmployeeResource(fi)
+
+	state := employeeModelFor(3, "N", "e@example.com", true)
+	state.BossNumber = types.Int64Value(4)
+	plan := employeeModelFor(3, "N", "e@example.com", true)
+	plan.BossNumber = types.Int64Value(4)
+
+	resp := &resource.UpdateResponse{State: emptyEmployeeState(t)}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan: employeePlan(t, plan), State: employeeState(t, state),
+	}, resp)
+
+	if len(fi.bossSets) != 0 {
+		t.Errorf("boss writes = %+v, want none when the boss is unchanged", fi.bossSets)
+	}
+}
+
+func TestUpdateEmployee_FailedBossChangePropagates(t *testing.T) {
+	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "N", IsValidated: true})
+	fi.bossErr = errors.New("boss rejected")
+	r := newEmployeeResource(fi)
+
+	state := employeeModelFor(3, "N", "e@example.com", true)
+	plan := employeeModelFor(3, "N", "e@example.com", true)
+	plan.BossNumber = types.Int64Value(4)
+
+	resp := &resource.UpdateResponse{State: emptyEmployeeState(t)}
+	r.Update(context.Background(), resource.UpdateRequest{
+		Plan: employeePlan(t, plan), State: employeeState(t, state),
+	}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a failed boss change must fail the apply")
+	}
+	if !strings.Contains(diagsText(resp.Diagnostics), "boss rejected") {
+		t.Errorf("diagnostic should carry the cause, got: %s", diagsText(resp.Diagnostics))
 	}
 }
