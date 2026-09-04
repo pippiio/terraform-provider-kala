@@ -518,6 +518,12 @@ func TestInternal_SetWorkerEmailFailsWhenUnverified(t *testing.T) {
 	if !strings.Contains(err.Error(), "reads back as") {
 		t.Errorf("error should report the read-back mismatch, got %q", err.Error())
 	}
+	// A bare mismatch invites the operator to retry with a different address.
+	// Observed against the live tenant, that never helps: the endpoint no-ops
+	// per employee, not per address. Saying so is the useful part.
+	if !strings.Contains(err.Error(), "regardless") {
+		t.Errorf("error should say a different address will not help, got %q", err.Error())
+	}
 }
 
 // Kala may normalise case; a case-only difference is not a failure.

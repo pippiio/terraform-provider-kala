@@ -688,8 +688,20 @@ func (c *internalAPI) SetWorkerEmail(ctx context.Context, workerNr int64, email 
 		return fmt.Errorf("kala: could not verify the email change for worker %d: %w", workerNr, err)
 	}
 	if !strings.EqualFold(info.Email, email) {
+		// OBSERVED 2026-09-04 against the live tenant: SetEmailNew returns
+		// success and changes nothing for SOME workers. One worker accepted
+		// every address tried; another refused every address tried — the same
+		// requests, differing only in workerNr — whether active or inactive.
+		// So the rejection is a property of the employee, not of the address.
+		//
+		// The cause is not established, and this message deliberately does not
+		// guess at one. What it does say is that retrying with a different
+		// address will not help, which is the mistake the bare mismatch invites.
 		return fmt.Errorf(
-			"kala: SetEmail for worker %d reported success but the address reads back as %q, expected %q",
+			"kala: SetEmail for worker %d reported success but the address reads back as %q, "+
+				"expected %q. Kala silently ignores the change for some employees regardless "+
+				"of the address, so a different address is unlikely to help; this employee's "+
+				"email may only be changeable in Kala's own interface",
 			workerNr, info.Email, email)
 	}
 

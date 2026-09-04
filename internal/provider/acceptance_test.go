@@ -73,6 +73,49 @@ func testAccPreCheck(t *testing.T) {
 	}
 }
 
+// accEmailFor derives a distinct address per employee number from KALA_ACC_EMAIL.
+//
+// The addresses MUST differ between the employees this suite touches. Kala's
+// SetEmailNew silently ignores an address that already belongs to another
+// worker — it returns success and leaves the old value — so a suite that used
+// one shared address would fail on the second employee with a read-back
+// mismatch that looks like a provider bug and is not.
+//
+// Observed 2026-09-04: setting worker 3 to worker 2's address reported success
+// and changed nothing.
+func accEmailFor(t *testing.T, number int64) string {
+	t.Helper()
+
+	base := os.Getenv(envAccEmail)
+	local, domain, ok := strings.Cut(base, "@")
+	if !ok {
+		t.Fatalf("%s = %q, want an address of the form local@domain", envAccEmail, base)
+	}
+	return fmt.Sprintf("%s-acc%d@%s", local, number, domain)
+}
+
+// accCurrentEmail returns the address the employee already holds, falling back
+// to a derived one when Kala reports none.
+//
+// Tests whose subject is NOT the email use this, so they do not depend on an
+// endpoint unrelated to what they assert. That matters here: SetEmailNew
+// silently declines to change the address for some employees — observed
+// 2026-09-04, one worker accepted every address tried and another refused every
+// address tried, active or inactive — so requiring a writable email on every
+// employee the suite touches would make unrelated tests fail on tenant data
+// rather than on provider behaviour.
+//
+// Changing the email is the lifecycle test's job, on the primary employee.
+func accCurrentEmail(t *testing.T, number int64) string {
+	t.Helper()
+
+	info, err := accInternalClient(t).GetWorkerInfo(context.Background(), number)
+	if err != nil || info.Email == "" {
+		return accEmailFor(t, number)
+	}
+	return info.Email
+}
+
 // accNumber reads a required employee number from the environment.
 func accNumber(t *testing.T, envVar string) int64 {
 	t.Helper()
@@ -204,7 +247,7 @@ func TestAccEmployee_lifecycle(t *testing.T) {
 	testAccPreCheck(t)
 
 	number := accNumber(t, envAccNumber)
-	email := os.Getenv(envAccEmail)
+	email := accEmailFor(t, number)
 	name := "Acceptance Test Employee"
 
 	resource.Test(t, resource.TestCase{
@@ -227,6 +270,9 @@ func TestAccEmployee_lifecycle(t *testing.T) {
 					checkEmployeeActive(t, number, true),
 					checkEmployeeFieldUpstream(t, number, "title", "Acceptance Title"),
 					checkEmployeeFieldUpstream(t, number, "department", "Acceptance Dept"),
+					// email is the one attribute with real drift detection, so
+					// the write must be confirmed upstream like the rest.
+					checkEmployeeFieldUpstream(t, number, "email", email),
 				),
 			},
 			// An in-place update must reach Kala, not just Terraform state.
@@ -257,7 +303,7 @@ func TestAccEmployee_activeTogglesDeactivation(t *testing.T) {
 	testAccPreCheck(t)
 
 	number := accNumber(t, envAccNumber)
-	email := os.Getenv(envAccEmail)
+	email := accEmailFor(t, number)
 	name := "Acceptance Test Employee"
 
 	resource.Test(t, resource.TestCase{
@@ -304,7 +350,7 @@ func TestAccEmployee_adoptsAnExistingNumber(t *testing.T) {
 	testAccPreCheck(t)
 
 	number := accNumber(t, envAccAltNumber)
-	email := os.Getenv(envAccEmail)
+	email := accCurrentEmail(t, number)
 	name := "Acceptance Adoption Employee"
 
 	resource.Test(t, resource.TestCase{
@@ -340,7 +386,7 @@ func TestAccEmployee_import(t *testing.T) {
 	testAccPreCheck(t)
 
 	number := accNumber(t, envAccNumber)
-	email := os.Getenv(envAccEmail)
+	email := accEmailFor(t, number)
 	name := "Acceptance Test Employee"
 
 	resource.Test(t, resource.TestCase{
@@ -351,15 +397,24 @@ func TestAccEmployee_import(t *testing.T) {
 				Config: accConfigEmployee(number, name, email, ""),
 			},
 			{
-				ResourceName:      "kala_employee.test",
-				ImportState:       true,
-				ImportStateId:     strconv.FormatInt(number, 10),
-				ImportStateVerify: true,
+				ResourceName:  "kala_employee.test",
+				ImportState:   true,
+				ImportStateId: strconv.FormatInt(number, 10),
+				// The resource has no "id" attribute — Kala's identifier is the
+				// employee number, and inventing a synthetic id would add a
+				// field with no meaning upstream. The framework must be told
+				// which attribute identifies the resource instead.
+				ImportStateVerifyIdentifierAttribute: "employee_number",
+				ImportStateVerify:                    true,
 				ImportStateVerifyIgnore: []string{
-					// Never returned by any read endpoint.
-					"email",
 					// Creation-time only; not a property of the record.
 					"send_welcome_email",
+					// Import recovers the name Kala actually stores. The
+					// managed state holds the CONFIGURED name, and the two
+					// legitimately differ: Kala has no rename endpoint, so a
+					// changed name is a warned no-op upstream. Comparing them
+					// would assert a round-trip the API cannot perform.
+					"name",
 				},
 			},
 		},
@@ -375,7 +430,7 @@ func TestAccEmployee_renameWarnsAndConverges(t *testing.T) {
 	testAccPreCheck(t)
 
 	number := accNumber(t, envAccNumber)
-	email := os.Getenv(envAccEmail)
+	email := accEmailFor(t, number)
 
 	resource.Test(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
@@ -404,7 +459,7 @@ func TestAccEmployeesDataSource_seesTheManagedEmployee(t *testing.T) {
 	testAccPreCheck(t)
 
 	number := accNumber(t, envAccNumber)
-	email := os.Getenv(envAccEmail)
+	email := accEmailFor(t, number)
 
 	resource.Test(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,

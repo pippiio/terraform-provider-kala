@@ -486,11 +486,18 @@ func (r *employeeResource) ImportState(ctx context.Context, req resource.ImportS
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("employee_number"), number)...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("adopted"), true)...)
 
+	// This warning used to say email could not be imported. That stopped being
+	// true once WorkerInfo was wired in: name and email both come back from the
+	// read, and an acceptance test now verifies they survive an import
+	// round-trip. What is worth flagging is the one value that cannot be
+	// reconciled afterwards.
 	resp.Diagnostics.AddWarning(
-		"email could not be imported",
-		"Kala returns no email address from any read endpoint, so it cannot be recovered on import. "+
-			"Set it in your configuration; it is only ever sent when an employee is created, so the "+
-			"value will not be written back to Kala.",
+		"Check the imported name against your configuration",
+		"name and email are recovered from Kala's record. If your configuration gives a different "+
+			"name, Kala has no rename endpoint — the next apply will warn and Kala will keep the "+
+			"name it already holds.\n\n"+
+			"send_welcome_email is not part of the record and cannot be imported; it defaults to "+
+			"true and only ever takes effect if this resource creates an employee.",
 	)
 }
 
@@ -649,6 +656,19 @@ func applyWorkerInfo(m *employeeResourceModel, i client.WorkerInfo) {
 	// email is readable after all — via WorkerInfo, not the endpoints that
 	// return the settings list. Refreshing it gives real drift detection.
 	m.Email = types.StringValue(i.Email)
+
+	// name is deliberately NOT refreshed for an employee already under
+	// management. Kala has no rename endpoint, so a configured name that
+	// differs from the stored one is a warned no-op; overwriting it from the
+	// read would turn that warning into a diff the operator can never resolve.
+	//
+	// Import is the one case with no prior name to protect. It arrives with no
+	// state and no configuration, and leaving a required attribute null would
+	// strand the imported resource. Filling it only when empty recovers the
+	// real name at import without ever fighting configuration afterwards.
+	if m.Name.IsNull() || m.Name.IsUnknown() || m.Name.ValueString() == "" {
+		m.Name = types.StringValue(i.Name)
+	}
 
 	m.Title = types.StringValue(i.Title)
 	m.Phone = types.StringValue(i.Phone)

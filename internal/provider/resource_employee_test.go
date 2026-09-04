@@ -740,8 +740,12 @@ func TestImportEmployee_ByNumber(t *testing.T) {
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("import failed: %s", diagsText(resp.Diagnostics))
 	}
-	if !strings.Contains(diagsText(resp.Diagnostics), "email") {
-		t.Error("import must warn that email cannot be recovered")
+	// email and name ARE recovered on import — an acceptance test verifies the
+	// round-trip. The warning's job is the value that cannot be reconciled
+	// afterwards: a configured name Kala has no endpoint to apply.
+	if !strings.Contains(diagsText(resp.Diagnostics), "no rename endpoint") {
+		t.Errorf("import should warn about the name that cannot be applied, got: %s",
+			diagsText(resp.Diagnostics))
 	}
 }
 
@@ -1010,6 +1014,30 @@ func TestApplyWorker_OnlyTouchesActivationAndAdopted(t *testing.T) {
 	}
 	if !m.Title.IsNull() {
 		t.Errorf("title should not be set from the list record, got %v", m.Title)
+	}
+}
+
+// Import arrives with no prior state, so name must come from Kala — otherwise
+// the imported resource carries a null required attribute.
+func TestApplyWorkerInfo_FillsNameWhenEmpty(t *testing.T) {
+	m := employeeResourceModel{}
+	applyWorkerInfo(&m, client.WorkerInfo{WorkerNr: 3, Name: "Real Name In Kala"})
+
+	if m.Name.ValueString() != "Real Name In Kala" {
+		t.Errorf("name = %q, want it recovered from Kala on import", m.Name.ValueString())
+	}
+}
+
+// The managed case is the opposite: Kala has no rename endpoint, so a
+// configured name that differs is a warned no-op. Refreshing it from the read
+// would turn that warning into a diff the operator could never resolve.
+func TestApplyWorkerInfo_NeverOverwritesAConfiguredName(t *testing.T) {
+	m := employeeResourceModel{Name: types.StringValue("Name From Configuration")}
+	applyWorkerInfo(&m, client.WorkerInfo{WorkerNr: 3, Name: "Stale Name In Kala"})
+
+	if m.Name.ValueString() != "Name From Configuration" {
+		t.Errorf("name = %q, want the configured value preserved — Kala cannot rename, "+
+			"so refreshing it would cause a perpetual diff", m.Name.ValueString())
 	}
 }
 

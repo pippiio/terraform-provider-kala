@@ -107,6 +107,20 @@ settings Kala returns, but the provider does not write them. Kala's list endpoin
 under-reports settings compared to its single-employee endpoint, so treat the
 list as what Kala reported rather than as the complete set.
 
+**Some employees' email addresses cannot be changed.** Kala's `SetEmailNew`
+returns success and changes nothing for certain employees. Observed 2026-09-04
+against a live tenant: one employee accepted every address tried, another
+refused every address tried — the same request differing only in the employee
+number, in both active and inactive states. The provider verifies the write by
+reading it back, so it reports an error rather than a false success. Retrying
+with a different address will not help; those records appear to be editable only
+in Kala's own interface.
+
+**`name` cannot be changed, only read.** Kala has no rename endpoint. Changing
+`name` on an existing employee warns and Kala keeps the name it holds. Import
+recovers the stored name, so an imported resource whose configuration disagrees
+will warn on the next apply rather than silently diverge.
+
 ## Development
 
 ```bash
