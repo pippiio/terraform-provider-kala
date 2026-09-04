@@ -18,7 +18,7 @@ import (
 const (
 	testUser  = "user@example.com"
 	testPass  = "hunter2-correct-horse"
-	testToken = "kauth-token-38357"
+	testToken = "kauth-token-9001"
 )
 
 // headerSpy records the auth headers seen on the non-handshake request.

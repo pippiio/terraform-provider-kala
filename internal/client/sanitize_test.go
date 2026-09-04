@@ -126,8 +126,8 @@ func TestRedactSensitiveValues_JSONBodies(t *testing.T) {
 		},
 		{
 			name:    "kauthtoken is caught in its own right",
-			in:      `{"kauthtoken":"38357:17221;abc="}`,
-			absent:  []string{"38357:17221"},
+			in:      `{"kauthtoken":"9001:4242;abc="}`,
+			absent:  []string{"9001:4242"},
 			present: []string{redactedPlaceholder},
 		},
 		{
