@@ -35,7 +35,9 @@ provider "kala" {}
 ### Optional
 
 - `api_key` (String, Sensitive) API key for the Kala webapiv2 API. May also be set via the `KALA_API_KEY` environment variable, which is preferred so the credential stays out of version control.
-- `company` (Number) Kala company identifier. May also be set via `KALA_COMPANY`. Required only by endpoints that take a company parameter.
+- `company` (Number) Kala company identifier. May also be set via `KALA_COMPANY`.
+
+A Kala login can belong to several companies, and this chooses which one the provider acts on — including which company's employees are created and deactivated. It may be omitted when the login belongs to exactly one; when it belongs to several, the provider refuses to guess and asks for this rather than writing to whichever Kala happens to list first.
 - `endpoint` (String) Base URL of the Kala webapiv2 API. Defaults to `https://app.kala.dk/webapiv2`. May also be set via `KALA_ENDPOINT`.
 - `max_retries` (Number) Maximum retries for transient failures. Only 5xx and transport errors are retried; 4xx never is. Defaults to 3.
 - `password` (String, Sensitive) Password for Kala's internal app API. May also be set via `KALA_PASSWORD`, which is preferred so the credential stays out of version control.
