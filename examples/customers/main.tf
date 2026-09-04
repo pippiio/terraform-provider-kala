@@ -10,7 +10,7 @@ terraform {
 # authenticates with a username and password rather than the api_key. Both
 # credentials come from the environment:
 #
-#   export KALA_API_KEY=...    # webapiv2 — employees and settings
+#   export KALA_API_KEY=...    # webapiv2 — employee reads
 #   export KALA_USERNAME=...   # internal API — customers, cases, tasks
 #   export KALA_PASSWORD=...
 provider "kala" {}

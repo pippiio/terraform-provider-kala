@@ -28,8 +28,8 @@
 //      as though it had would be acting on a wrong answer, not a partial one.
 //
 // Output: CustomerScan{Customers, Total, Fetched, Pages}, whose Complete()
-//         reports Fetched >= Total. Modelled on SettingKeyScan, for the same
-//         reason: the bound travels with the findings instead of being hidden.
+//         reports Fetched >= Total, so the bound travels with the findings
+//         instead of being hidden.
 //
 // Dependencies: internalAPI.authedRequest (session + kacompany), ErrDecode,
 //               sanitize for any error carrying a URL.
@@ -88,10 +88,9 @@ type CustomerQuery struct {
 // CustomerScan is a customer list read together with how much of the account it
 // actually covered.
 //
-// Coverage travels with the findings for the same reason it does on
-// SettingKeyScan: a read that stopped at its page cap has not seen the account,
-// and a caller that treats it as though it had is acting on a wrong answer
-// rather than a partial one.
+// Coverage travels with the findings because a read that stopped at its page
+// cap has not seen the account, and a caller that treats it as though it had is
+// acting on a wrong answer rather than a partial one.
 type CustomerScan struct {
 	Customers []Customer
 

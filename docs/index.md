@@ -1,16 +1,16 @@
 ---
 page_title: "kala Provider"
 description: |-
-  Manages configuration in Kala https://kala.app, a Danish work-management platform for construction and service trades. Employees and their settings are managed as resources; customers, cases, and tasks are read-only.
+  Manages configuration in Kala https://kala.app, a Danish work-management platform for construction and service trades. Employees are managed as resources; their settings, customers, cases, and tasks are read-only.
 ---
 
 # kala Provider
 
-Manages configuration in [Kala](https://kala.app), a Danish work-management platform for construction and service trades. Employees and their settings are managed as resources; customers, cases, and tasks are read-only.
+Manages configuration in [Kala](https://kala.app), a Danish work-management platform for construction and service trades. Employees are managed as resources; their settings, customers, cases, and tasks are read-only.
 
 ## Credentials
 
-Kala is two APIs. The documented `webapiv2` (`api_key`) owns employee settings.
+Kala is two APIs. The documented `webapiv2` (`api_key`) covers employee reads.
 The app's internal API (`username`/`password`) owns employee lifecycle and is the
 **only** source of customers, cases, and tasks — so every data source except
 `kala_employees` needs `KALA_USERNAME` and `KALA_PASSWORD`. That API is
@@ -20,10 +20,10 @@ undocumented and unversioned, and may change without notice.
 
 ```terraform
 # Customers, cases, and tasks are served ONLY by Kala's internal app API, which
-# authenticates with a username and password rather than the api_key. Employees
-# and settings use the api_key. Both come from the environment:
+# authenticates with a username and password rather than the api_key. Employee
+# reads use the api_key. Both come from the environment:
 #
-#   export KALA_API_KEY=...    # webapiv2 — employees and settings
+#   export KALA_API_KEY=...    # webapiv2 — employee reads
 #   export KALA_USERNAME=...   # internal API — customers, cases, tasks
 #   export KALA_PASSWORD=...
 provider "kala" {}
