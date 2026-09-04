@@ -28,11 +28,12 @@ Creation uses the internal app API's `SignUp` endpoint, so `username` and `passw
 
 - `email` (String) Email address. Set at creation, refreshed from `WorkerInfo` on every read, and updated in place via `SetEmailNew` when changed — so this is a fully managed attribute with real drift detection.
 - `employee_number` (Number) The employee's number. Kala does not allocate this — you choose it. The same value is used across both Kala APIs (`medarbejderNr`, `workerNr`, and webapiv2's `employeeNumber` are one value). Changing it forces replacement.
-- `name` (String) Full name. Sent when the employee is created. Kala exposes no endpoint to rename an existing employee, so changing this on an adopted or existing employee produces a warning rather than a rename.
+- `name` (String) Full name. Sent when the employee is created, refreshed from `WorkerInfo` on every read, and updated in place via `ChangeWorkerName` when changed — so it is a fully managed attribute with real drift detection. An adopted employee whose name differs from the configuration is renamed to match.
 
 ### Optional
 
-- `active` (Boolean) Whether the employee is active (`isValidated` in Kala). Setting this to `false` deactivates them; `true` reactivates. This is the only employee field Kala allows Terraform to both read and write, so it is the only one with real drift detection.
+- `active` (Boolean) Whether the employee is active (`isValidated` in Kala). Setting this to `false` deactivates them; `true` reactivates. Destroying the resource sets it to `false` — Kala has no delete — so this is the attribute that carries offboarding.
+- `boss_employee_number` (Number) The `employee_number` of this employee's manager — Kala calls this the *first boss*. Omitting it leaves whatever Kala already holds, like every other optional attribute here.
 - `date_of_employment` (String) Employment start date as `YYYY-MM-DD`.
 
 Kala's write endpoint takes a timestamp plus a GMT offset while its read returns a plain date, and the offset can shift the stored date across midnight. The provider sends midnight UTC at offset 0 so the value round-trips exactly.
@@ -54,6 +55,7 @@ This only takes effect at creation; changing it afterwards does nothing.
 ### Read-Only
 
 - `adopted` (Boolean) True when this resource took over an employee that already existed in Kala rather than creating one. Useful for spotting configurations that assume they provisioned a person they actually inherited.
+- `boss_name` (String) The manager's name, as Kala reports it. Read-only — set `boss_employee_number` to change who it is.
 - `flex_start_date` (String) Flex-time start date. Read-only — Kala exposes no endpoint to set it.
 - `is_super_user` (Boolean) Whether the employee is a super user. Read-only — Kala exposes no endpoint to set it.
 - `is_visible_in_planner` (Boolean) Whether the employee appears in the planner. Read-only — Kala exposes no endpoint to set it.
