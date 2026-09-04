@@ -116,7 +116,7 @@ vocabulary, on how failure is reported, and on who exists.
 | Paths | Flat endpoint names | `/api/…`, trailing slash present or absent per endpoint |
 | Failure reporting | HTTP status; an unknown employee is `200` with an **empty body**, not `404` | `HTTP 200` carrying `{"status":"Error","message":"…"}` — **in Danish**. `WorkerInfo` returns `500` for a missing worker |
 | Who it can see | **Active employees only** | **All workers**, active or not, via `isValidated` |
-| Role in this provider | Reads only — backs `kala_employees` | Every write, the whole lifecycle, and `kala_employee`'s own `Read` |
+| Role in this provider | Reads only, and only employees — backs `kala_employees` | Every write, the whole employee lifecycle, `kala_employee`'s own `Read`, and **all** customer, case, and task reads |
 
 `medarbejderNr`, `workerNr`, `workerId`, and `employeeNumber` are one value, so a
 single `employee_number` addresses a person across both.
