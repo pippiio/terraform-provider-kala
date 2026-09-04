@@ -31,19 +31,6 @@ type Client interface {
 	// It returns an error satisfying errors.Is(err, ErrNotFound) when no such
 	// employee exists.
 	GetEmployee(ctx context.Context, number int64) (Employee, error)
-
-	// ApplyEmployeeSetting creates or updates one setting on one employee.
-	//
-	// There is no corresponding delete: Kala offers no way to remove a setting,
-	// only to overwrite its value. Callers should validate the key first.
-	ApplyEmployeeSetting(ctx context.Context, employeeNumber int64, s Setting, meta SettingMetadata) error
-
-	// ScanSettingKeys surveys the account for every setting key in use,
-	// sorted and deduplicated. It backs the unknown-key guard.
-	//
-	// The survey is bounded, so the result reports its own completeness
-	// rather than only its findings — see SettingKeyScan.
-	ScanSettingKeys(ctx context.Context) (SettingKeyScan, error)
 }
 
 // Employee is the provider-owned representation of a person in Kala.
@@ -63,11 +50,9 @@ type Employee struct {
 
 // Setting is a single key/value configuration entry on an employee.
 //
-// Only Key and Value are populated from reads: both Kala read endpoints return
-// {key, value} and nothing more. FriendlyName and Type exist on the WRITE side
-// only (SetEmployeeSetting requires friendlyName), which makes them structurally
-// write-only — they can be sent but never read back. They are deliberately
-// absent from this struct so that no read path can imply it knows them.
+// Read-only: both Kala read endpoints return {key, value} and nothing more.
+// The provider surfaces settings through the kala_employees data source and
+// does not write them.
 type Setting struct {
 	Key   string
 	Value string

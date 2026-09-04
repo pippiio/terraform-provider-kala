@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	fwschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -14,6 +15,16 @@ import (
 
 	"github.com/techchapter/terraform-provider-kala/internal/client"
 )
+
+// diagsText flattens diagnostics into one string so assertions can look for a
+// summary and its detail together.
+func diagsText(d diag.Diagnostics) string {
+	var b strings.Builder
+	for _, x := range d {
+		b.WriteString(x.Summary() + " | " + x.Detail() + "\n")
+	}
+	return b.String()
+}
 
 // fakeInternal doubles the internal app API and records every call.
 type fakeInternal struct {

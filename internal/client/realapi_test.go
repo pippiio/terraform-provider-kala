@@ -60,10 +60,13 @@ func TestListEmployees_Empty200BodyIsAnEmptyList(t *testing.T) {
 }
 
 // OBSERVED: ActiveEmployeesList under-reports settings. For the same employee
-// the list returned 11 keys while ActiveEmployee returned 12. A key present
-// only on the single endpoint must still be discoverable, or the unknown-key
-// guard rejects a key that genuinely exists.
-func TestScanSettingKeys_IncludesKeysOnlyVisibleOnTheSingleEndpoint(t *testing.T) {
+// the list returned 11 keys while ActiveEmployee returned 12, omitting
+// "favorite_materials".
+//
+// This is why the kala_employees data source documents its settings list as
+// what the list endpoint reports rather than as the complete set: reading one
+// employee can legitimately return keys the list never showed.
+func TestListEmployees_UnderReportsSettingsComparedToGetEmployee(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/ActiveEmployeesList" {
 			_, _ = w.Write([]byte(`[{"number":1,"name":"A","settings":[{"key":"listed_key","value":"v"}]}]`))
@@ -78,22 +81,29 @@ func TestScanSettingKeys_IncludesKeysOnlyVisibleOnTheSingleEndpoint(t *testing.T
 	defer srv.Close()
 
 	c := newWebAPIv2(testConfig(srv.URL))
-	scan, err := c.ScanSettingKeys(context.Background())
-	if err != nil {
-		t.Fatalf("ScanSettingKeys: %v", err)
-	}
-	got := scan.Keys
 
-	want := map[string]bool{"listed_key": false, "favorite_materials": false}
-	for _, k := range got {
-		if _, ok := want[k]; ok {
-			want[k] = true
-		}
+	listed, err := c.ListEmployees(context.Background(), ListOptions{PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListEmployees: %v", err)
 	}
-	for k, found := range want {
-		if !found {
-			t.Errorf("key %q missing from %v — the list endpoint under-reports settings", k, got)
-		}
+	if len(listed) != 1 {
+		t.Fatalf("len = %d, want 1", len(listed))
+	}
+	if len(listed[0].Settings) != 1 {
+		t.Fatalf("list settings = %v, want just the one the list endpoint reports", listed[0].Settings)
+	}
+
+	full, err := c.GetEmployee(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("GetEmployee: %v", err)
+	}
+
+	keys := make(map[string]bool, len(full.Settings))
+	for _, s := range full.Settings {
+		keys[s.Key] = true
+	}
+	if !keys["favorite_materials"] {
+		t.Errorf("settings = %v, want the key only the single endpoint reports", full.Settings)
 	}
 }
 

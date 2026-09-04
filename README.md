@@ -63,7 +63,7 @@ private registry) for when a filesystem mirror stops scaling.
 Credentials resolve from the environment, so they need never enter a `.tf` file:
 
 ```bash
-export KALA_API_KEY=...    # webapiv2 — employee settings
+export KALA_API_KEY=...    # webapiv2 — reads
 export KALA_USERNAME=...   # internal app API — employee lifecycle
 export KALA_PASSWORD=...
 ```
@@ -76,24 +76,22 @@ provider "kala" {
 ```
 
 Kala's surface is split across two APIs and neither is sufficient alone: the
-documented `webapiv2` owns employee **settings**, while the app's internal API
-owns employee **lifecycle** — creation, activation, and every profile field. Only
-resources that touch lifecycle need `username`/`password`.
+documented `webapiv2` covers **reads**, while the app's internal API owns employee
+**lifecycle** — creation, activation, and every profile field. Only resources that
+touch lifecycle need `username`/`password`.
 
 ## Resources and data sources
 
 | Name | Kind | Purpose |
 |------|------|---------|
 | `kala_employee` | resource | Create, adopt, configure, and deactivate an employee |
-| `kala_employee_setting` | resource | One setting on one employee |
 | `kala_employees` | data source | List active employees |
 
 ### Behaviour worth knowing before you apply
 
 **Destroy deactivates; it does not delete.** Kala has no delete endpoint for
 employees. `terraform destroy` sets the employee inactive, verifies it, and warns
-that the record and its history remain. For `kala_employee_setting` — which has
-no deactivate either — destroy only removes the resource from state and says so.
+that the record and its history remain.
 
 **An existing `employee_number` is adopted, not rejected.** Numbers are chosen by
 you rather than allocated by Kala, and employees cannot be deleted, so a number
@@ -104,16 +102,10 @@ attribute your configuration does not mention untouched.
 **Welcome emails only fire on genuine creation.** Never on adoption or
 reactivation. Set `send_welcome_email = false` to suppress them entirely.
 
-**Setting keys are validated against the account.** Kala cannot delete a setting,
-so a mistyped key is permanent. `kala_employee_setting` rejects a key that exists
-nowhere on the account and suggests the nearest match; `allow_new_key = true`
-introduces a genuinely new one.
-
-The survey behind that check is bounded — it examines at most 200 employees in
-full, and skips any whose record it cannot read. On a larger account the
-rejection says so and reports how many were examined, rather than claiming the
-key exists nowhere. Read that wording before reaching for `allow_new_key`: the
-key may simply live on an employee that was not checked.
+**Employee settings are read-only.** `kala_employees` surfaces the key/value
+settings Kala returns, but the provider does not write them. Kala's list endpoint
+under-reports settings compared to its single-employee endpoint, so treat the
+list as what Kala reported rather than as the complete set.
 
 ## Development
 

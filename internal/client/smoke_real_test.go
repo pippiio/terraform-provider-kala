@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"strings"
 	"testing"
 )
 
@@ -38,12 +37,4 @@ func TestSmoke_RealAPI(t *testing.T) {
 	} else {
 		t.Log("unknown employee correctly classified as ErrNotFound")
 	}
-
-	scan, err := c.ScanSettingKeys(ctx)
-	if err != nil {
-		t.Fatalf("ScanSettingKeys: %v", err)
-	}
-	t.Logf("ScanSettingKeys found %d keys across %d/%d employees (%d unreadable), complete=%t: %s",
-		len(scan.Keys), scan.Scanned, scan.Employees, scan.Failed, scan.Complete(),
-		strings.Join(scan.Keys, ", "))
 }

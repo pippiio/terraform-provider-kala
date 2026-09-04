@@ -102,12 +102,6 @@ func (c *webAPIv2) get(ctx context.Context, endpoint string, params url.Values) 
 	return c.do(ctx, http.MethodGet, endpoint, params)
 }
 
-// post performs a POST against an endpoint. The Kala API takes parameters in the
-// query string even for writes (see SetEmployeeSetting), so the body is empty.
-func (c *webAPIv2) post(ctx context.Context, endpoint string, params url.Values) ([]byte, error) {
-	return c.do(ctx, http.MethodPost, endpoint, params)
-}
-
 func (c *webAPIv2) do(ctx context.Context, method, endpoint string, params url.Values) ([]byte, error) {
 	if params == nil {
 		params = url.Values{}

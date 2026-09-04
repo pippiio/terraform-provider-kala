@@ -126,10 +126,6 @@ func TestProvider_RegistersExpectedResources(t *testing.T) {
 		names = append(names, resp.TypeName)
 	}
 
-	if !contains(names, "kala_employee_setting") {
-		t.Errorf("kala_employee_setting not registered; got %v", names)
-	}
-
 	// ARCH1.9 was resolved on 2026-09-01 — medarbejderNr, workerNr, and
 	// employeeNumber are confirmed to be one value — so kala_employee is now
 	// registered.
