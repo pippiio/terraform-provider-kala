@@ -118,36 +118,38 @@ func (s CustomerScan) Complete() bool { return s.Fetched >= s.Total }
 // Observed 2026-09-01 against the real API. Note number is a string on this
 // surface; webapiv2 sends an int for the same field name.
 type wireCustomer struct {
-	ID        int64  `json:"id"`
-	Number    string `json:"number"`
-	FirstName string `json:"firstName"`
-	LastName  string `json:"lastName"`
-	Company   string `json:"company"`
-	CVR       string `json:"cvr"`
-	Email     string `json:"email"`
-	Phone     string `json:"phone"`
-	Address   string `json:"address"`
-	Zip       string `json:"zip"`
-	City      string `json:"city"` // arrives as null in practice
-	EAN       string `json:"ean"`
-	CaseCount int    `json:"caseCount"`
+	ID          int64  `json:"id"`
+	Number      string `json:"number"`
+	FirstName   string `json:"firstName"`
+	LastName    string `json:"lastName"`
+	Company     string `json:"company"`
+	CVR         string `json:"cvr"`
+	Email       string `json:"email"`
+	Phone       string `json:"phone"`
+	Address     string `json:"address"`
+	Zip         string `json:"zip"`
+	City        string `json:"city"` // arrives as null in practice
+	EAN         string `json:"ean"`
+	CaseCount   int    `json:"caseCount"`
+	Description string `json:"description"`
 }
 
 func (w wireCustomer) toDomain() Customer {
 	return Customer{ //nolint:staticcheck // S1016: explicit mapping is intentional at the wire/domain boundary
-		ID:        w.ID,
-		Number:    w.Number,
-		FirstName: w.FirstName,
-		LastName:  w.LastName,
-		Company:   w.Company,
-		CVR:       w.CVR,
-		Email:     w.Email,
-		Phone:     w.Phone,
-		Address:   w.Address,
-		Zip:       w.Zip,
-		City:      w.City,
-		EAN:       w.EAN,
-		CaseCount: w.CaseCount,
+		ID:          w.ID,
+		Number:      w.Number,
+		FirstName:   w.FirstName,
+		LastName:    w.LastName,
+		Company:     w.Company,
+		CVR:         w.CVR,
+		Email:       w.Email,
+		Phone:       w.Phone,
+		Address:     w.Address,
+		Zip:         w.Zip,
+		City:        w.City,
+		EAN:         w.EAN,
+		CaseCount:   w.CaseCount,
+		Description: w.Description,
 	}
 }
 

@@ -38,6 +38,20 @@ type customerWriteMock struct {
 	// truncate makes the list read report more records than it returns, so
 	// a selection miss cannot be distinguished from a genuine absence.
 	truncate bool
+
+	// dropOnCreate names a field the CREATE endpoint silently discards while
+	// still reporting success -- the real, unresolved question about `ean`.
+	dropOnCreate string
+
+	// noCustomerID makes create answer Success while omitting the identifier.
+	noCustomerID bool
+
+	// rejectAt fails any request whose path contains it, so a test can refuse
+	// the write or the verification read independently.
+	rejectAt string
+
+	// badJSON makes create answer with a body that is not JSON at all.
+	badJSON bool
 }
 
 func newCustomerWriteMock(t *testing.T) *customerWriteMock {
@@ -51,6 +65,11 @@ func newCustomerWriteMock(t *testing.T) *customerWriteMock {
 			return
 		case strings.HasSuffix(r.URL.Path, "/Auth/SelectCompany/"):
 			_, _ = w.Write([]byte(`{"token":"session-token"}`))
+			return
+		}
+
+		if m.rejectAt != "" && strings.Contains(r.URL.Path, m.rejectAt) {
+			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
 
@@ -79,12 +98,24 @@ func newCustomerWriteMock(t *testing.T) *customerWriteMock {
 			return
 		}
 
+		if m.badJSON {
+			_, _ = w.Write([]byte(`<html>not json</html>`))
+			return
+		}
+
 		switch {
 		case strings.Contains(r.URL.Path, "AddCustomer"):
 			id := m.next
 			m.next++
 			if !m.noReflect {
+				if m.dropOnCreate != "" {
+					delete(parsed, m.dropOnCreate)
+				}
 				m.store[id] = writeRecord(id, parsed)
+			}
+			if m.noCustomerID {
+				_, _ = w.Write([]byte(`{"status":"Success"}`))
+				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "Success", "customerId": id})
 		case strings.Contains(r.URL.Path, "EditCustomer"):
@@ -260,5 +291,120 @@ func TestGetCustomer_PartialReadIsNotNotFound(t *testing.T) {
 	}
 	if errors.Is(err, ErrNotFound) {
 		t.Error("a miss inside a truncated read must NOT be ErrNotFound -- absence from a partial read proves nothing")
+	}
+}
+
+// ADR-003 constraint 4 in action. Which fields create accepts is not
+// trustworthy by inference, so a value that did not land is converged by an
+// edit rather than reported as a failure or assumed unsupported. `ean` is the
+// real open case this exists for.
+func TestAddCustomer_ConvergesFieldsCreateSilentlyDropped(t *testing.T) {
+	m := newCustomerWriteMock(t)
+	m.dropOnCreate = "ean"
+
+	got, err := m.client().AddCustomer(context.Background(), fullInput())
+	if err != nil {
+		t.Fatalf("AddCustomer: %v", err)
+	}
+	if got.EAN != "5790000000000" {
+		t.Errorf("EAN = %q, want the configured value converged by a follow-up edit", got.EAN)
+	}
+
+	var sawEdit bool
+	for _, p := range m.paths {
+		if strings.HasSuffix(p, "/api/EditCustomer/") {
+			sawEdit = true
+		}
+	}
+	if !sawEdit {
+		t.Error("a field dropped on create must be converged by EditCustomer, not left unset")
+	}
+}
+
+// Kala has no delete. A caller that loses the id of a record it just created
+// has stranded it permanently, so the id must survive a read-back failure
+// alongside the error (FR5).
+func TestAddCustomer_ReadBackFailureStillReturnsTheAllocatedID(t *testing.T) {
+	m := newCustomerWriteMock(t)
+	m.noReflect = true
+
+	got, err := m.client().AddCustomer(context.Background(), fullInput())
+	if err == nil {
+		t.Fatal("want an error when the created record cannot be read back")
+	}
+	if got.ID == 0 {
+		t.Fatal("the allocated id must be returned even on failure -- without it the record is stranded and Kala has no delete")
+	}
+}
+
+// A create that reports success without an identifier is a failure: the record
+// exists and cannot be addressed.
+func TestAddCustomer_SuccessWithoutIDIsAnError(t *testing.T) {
+	m := newCustomerWriteMock(t)
+	m.noCustomerID = true
+
+	if _, err := m.client().AddCustomer(context.Background(), fullInput()); err == nil {
+		t.Fatal("success without a customerId must be an error -- the new record cannot be identified")
+	}
+}
+
+// The counterpart to the truncated-read case: when the read DID cover
+// everything, absence is genuine and must be ErrNotFound so callers can treat
+// it as drift (TF1.2).
+func TestGetCustomer_AbsentFromCompleteReadIsNotFound(t *testing.T) {
+	m := newCustomerWriteMock(t)
+	m.store[1] = writeRecord(1, map[string]any{"company": "Bag End Ltd"})
+
+	_, err := m.client().GetCustomer(context.Background(), 99)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound when the read covered every record", err)
+	}
+}
+
+// The create response is the only place the new id exists. A body that cannot
+// be decoded is a decode error, not a silent zero id.
+func TestAddCustomer_UndecodableResponseIsADecodeError(t *testing.T) {
+	m := newCustomerWriteMock(t)
+	m.badJSON = true
+
+	_, err := m.client().AddCustomer(context.Background(), fullInput())
+	if !errors.Is(err, ErrDecode) {
+		t.Errorf("err = %v, want ErrDecode", err)
+	}
+}
+
+func TestEditCustomer_HTTPFailurePropagates(t *testing.T) {
+	m := newCustomerWriteMock(t)
+	m.store[2] = writeRecord(2, map[string]any{"company": "Old"})
+	m.rejectAt = "EditCustomer"
+
+	if _, err := m.client().EditCustomer(context.Background(), 2, fullInput()); err == nil {
+		t.Fatal("an HTTP failure on the write must propagate")
+	}
+}
+
+// The write may have landed; without a read-back that cannot be established,
+// so the id is returned alongside the error rather than the record being
+// reported as updated.
+func TestEditCustomer_ReadBackFailureReturnsIDAndError(t *testing.T) {
+	m := newCustomerWriteMock(t)
+	m.store[2] = writeRecord(2, map[string]any{"company": "Old"})
+	m.rejectAt = "GetCustomersPaged2"
+
+	got, err := m.client().EditCustomer(context.Background(), 2, fullInput())
+	if err == nil {
+		t.Fatal("want an error when the record cannot be read back")
+	}
+	if got.ID != 2 {
+		t.Errorf("ID = %d, want 2 so the caller can still address the record", got.ID)
+	}
+}
+
+func TestGetCustomer_ListFailurePropagates(t *testing.T) {
+	m := newCustomerWriteMock(t)
+	m.rejectAt = "GetCustomersPaged2"
+
+	if _, err := m.client().GetCustomer(context.Background(), 1); err == nil {
+		t.Fatal("a failed list read must propagate, not read as not-found")
 	}
 }
