@@ -114,3 +114,46 @@ func TestIntegration_Deactivate(t *testing.T) {
 	// isValidated=false rather than disappearing, so drift stays detectable.
 	t.Logf("workerNr=%d isValidated=%t, still listed", after.WorkerNr, after.IsValidated)
 }
+
+// Task 1.1 of customer-case-task-resources: establish WHICH tenant the
+// configured credentials act on, before any write in that track runs.
+//
+// This matters because .env carries no endpoint or company override, so the
+// session resolves against the same host as production and isolation rests
+// entirely on which company this login selects. A write track that creates
+// undeletable records must not discover that distinction afterwards.
+//
+// Read-only: signIn alone, no SelectCompany, no mutation.
+//
+// Observed 2026-09-07: the configured login resolves to EXACTLY ONE company,
+// id=17221 "Faurbye.io Aps" — the same tenant this provider has been developed
+// against throughout. Single-company means chooseCompany cannot pick wrongly and
+// KALA_COMPANY need not be set, which removes the wrong-tenant risk for writes.
+// It does NOT make writes reversible: Kala still has no delete anywhere.
+//
+// Logs the company id and name ONLY. secureLoginToken is a live credential
+// (SEC1.1/SEC1.3) and is never printed, not even truncated.
+func TestIntegration_WhichCompany(t *testing.T) {
+	if os.Getenv("KALA_PROBE") != "1" {
+		t.Skip("set KALA_PROBE=1")
+	}
+
+	c, ok := internalFromEnv().(*internalAPI)
+	if !ok {
+		t.Fatalf("internalFromEnv did not return *internalAPI")
+	}
+
+	resp, err := c.signIn(context.Background())
+	if err != nil {
+		t.Fatalf("signIn: %v", err)
+	}
+
+	t.Logf("login resolves to %d company/companies:", len(resp.Companies))
+	for _, co := range resp.Companies {
+		t.Logf("  id=%d name=%q", co.ID, co.Name)
+	}
+
+	if len(resp.Companies) != 1 {
+		t.Logf("AMBIGUOUS: writes require an explicit company (KALA_COMPANY)")
+	}
+}
