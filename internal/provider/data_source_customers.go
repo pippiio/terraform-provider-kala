@@ -78,9 +78,14 @@ func customerAttributes() map[string]schema.Attribute {
 		},
 		"number": schema.StringAttribute{
 			Computed: true,
-			MarkdownDescription: "The customer number. A **string** on this API. Do not assume it " +
-				"equals `id`, and do not assume it matches the integer `number` webapiv2 returns " +
-				"for the same customer -- that equivalence is unverified.",
+			// Verified 2026-09-07 against tenant 17221: webapiv2's CustomersList
+			// and the internal GetCustomersPaged2 return IDENTICAL id and number
+			// for the same customer, and number is a string on both. The earlier
+			// caveat here claimed webapiv2 spelled it as an integer and that the
+			// equivalence was unverified; both claims were wrong.
+			MarkdownDescription: "The customer number, e.g. `KA-1`. A **string**, and distinct " +
+				"from the integer `id` -- do not assume they are interchangeable. It is allocated " +
+				"by Kala, not chosen. Verified to hold the same value on both APIs.",
 		},
 		"first_name": schema.StringAttribute{Computed: true, MarkdownDescription: "Contact's first name."},
 		"last_name":  schema.StringAttribute{Computed: true, MarkdownDescription: "Contact's last name."},

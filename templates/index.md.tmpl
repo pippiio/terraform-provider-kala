@@ -77,7 +77,7 @@ cases that genuinely match.
 |-------|------|------|
 | `kala_case.number` | string | e.g. `KA-1`. How a case is **addressed** |
 | `kala_case.id` | number | How a case is **referenced** by `kala_tasks.case_id` |
-| `kala_customer.number` | string | A string here; `webapiv2` spells the same field as an integer, and the two are not known to hold the same value |
+| `kala_customer.number` | string | Allocated by Kala, not chosen. A string on **both** APIs, holding the same value (verified 2026-09-07) |
 
 `economy_case_number` mirrors `number` on every case observed, including
 Kala-native internal projects that have no e-conomic counterpart. Do not treat it

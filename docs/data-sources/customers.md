@@ -59,6 +59,6 @@ Read-Only:
 - `first_name` (String) Contact's first name.
 - `id` (Number) Kala's internal customer id. This is the value `kala_case` records reference, and the identifier to join on.
 - `last_name` (String) Contact's last name.
-- `number` (String) The customer number. A **string** on this API. Do not assume it equals `id`, and do not assume it matches the integer `number` webapiv2 returns for the same customer -- that equivalence is unverified.
+- `number` (String) The customer number, e.g. `KA-1`. A **string**, and distinct from the integer `id` -- do not assume they are interchangeable. It is allocated by Kala, not chosen. Verified to hold the same value on both APIs.
 - `phone` (String) Phone number. **Null unless `include_contact_details` is set** -- contact data is personal data and everything exposed here is written to Terraform state.
 - `zip` (String) Postal code. **Null unless `include_contact_details` is set** -- contact data is personal data and everything exposed here is written to Terraform state.
