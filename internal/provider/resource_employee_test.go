@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -29,6 +30,16 @@ func diagsText(d diag.Diagnostics) string {
 // fakeInternal doubles the internal app API and records every call.
 type fakeInternal struct {
 	workers map[int64]client.Worker
+
+	customers          map[int64]client.Customer
+	customerID         int64
+	customerIn         client.CustomerInput
+	editedID           int64
+	addCustomerCalled  bool
+	editCustomerCalled bool
+	addCustomerErr     error
+	editCustomerErr    error
+	getCustomerErr     error
 
 	createCalled  bool
 	created       client.NewWorker
@@ -104,7 +115,7 @@ func newFakeInternal(workers ...client.Worker) *fakeInternal {
 	for _, w := range workers {
 		m[w.WorkerNr] = w
 	}
-	return &fakeInternal{workers: m}
+	return &fakeInternal{workers: m, customers: map[int64]client.Customer{}, customerID: 4}
 }
 
 func (f *fakeInternal) ListWorkers(context.Context) ([]client.Worker, error) {
@@ -223,16 +234,50 @@ func (f *fakeInternal) ListCustomers(context.Context, client.CustomerQuery) (cli
 	return client.CustomerScan{}, nil
 }
 
-func (f *fakeInternal) AddCustomer(context.Context, client.CustomerInput) (client.Customer, error) {
-	return client.Customer{}, nil
+func (f *fakeInternal) AddCustomer(_ context.Context, in client.CustomerInput) (client.Customer, error) {
+	f.addCustomerCalled = true
+	f.customerIn = in
+	if f.addCustomerErr != nil {
+		// Kala allocated the record before the failure, so the id comes back
+		// with the error -- the shape AddCustomer really returns (FR5).
+		return client.Customer{ID: f.customerID}, f.addCustomerErr
+	}
+	c := customerFrom(f.customerID, in)
+	f.customers[f.customerID] = c
+	return c, nil
 }
 
-func (f *fakeInternal) EditCustomer(context.Context, int64, client.CustomerInput) (client.Customer, error) {
-	return client.Customer{}, nil
+func (f *fakeInternal) EditCustomer(_ context.Context, id int64, in client.CustomerInput) (client.Customer, error) {
+	f.editCustomerCalled = true
+	f.customerIn = in
+	f.editedID = id
+	if f.editCustomerErr != nil {
+		return client.Customer{ID: id}, f.editCustomerErr
+	}
+	c := customerFrom(id, in)
+	f.customers[id] = c
+	return c, nil
 }
 
-func (f *fakeInternal) GetCustomer(context.Context, int64) (client.Customer, error) {
-	return client.Customer{}, nil
+func (f *fakeInternal) GetCustomer(_ context.Context, id int64) (client.Customer, error) {
+	if f.getCustomerErr != nil {
+		return client.Customer{}, f.getCustomerErr
+	}
+	c, ok := f.customers[id]
+	if !ok {
+		return client.Customer{}, fmt.Errorf("customer %d: %w", id, client.ErrNotFound)
+	}
+	return c, nil
+}
+
+func customerFrom(id int64, in client.CustomerInput) client.Customer {
+	return client.Customer{
+		ID: id, Number: fmt.Sprintf("KA-%d", id),
+		FirstName: in.FirstName, LastName: in.LastName, Company: in.Company,
+		Email: in.Email, Phone: in.Phone, Address: in.Address, Zip: in.Zip,
+		CVR: in.CVR, EAN: in.EAN, Description: in.Description,
+		City: "Hobbiton", CaseCount: 0,
+	}
 }
 
 func (f *fakeInternal) ListCases(context.Context, client.CaseQuery) (client.CaseScan, error) {
