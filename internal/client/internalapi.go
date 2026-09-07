@@ -143,6 +143,19 @@ type InternalClient interface {
 	// ListCustomers reads customers, reporting how much of the account it covered.
 	ListCustomers(ctx context.Context, q CustomerQuery) (CustomerScan, error)
 
+	// AddCustomer creates a customer and returns it with the identity Kala
+	// allocated. Verified by read-back (ARCH1.8).
+	AddCustomer(ctx context.Context, in CustomerInput) (Customer, error)
+
+	// EditCustomer replaces a customer record. FULL-RECORD REPLACE: an omitted
+	// field is blanked upstream, so callers must read-modify-write.
+	EditCustomer(ctx context.Context, id int64, in CustomerInput) (Customer, error)
+
+	// GetCustomer reads one customer by id, selecting from a list read because
+	// Kala exposes no by-id endpoint. Absence from an INCOMPLETE read is
+	// reported as such, never as not-found.
+	GetCustomer(ctx context.Context, id int64) (Customer, error)
+
 	// ListCases reads one set of cases -- archived or not, per q.Archived.
 	ListCases(ctx context.Context, q CaseQuery) (CaseScan, error)
 

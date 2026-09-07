@@ -51,11 +51,15 @@ import (
 //
 // Customers are imported from e-conomic, which owns them. Nothing here writes.
 type Customer struct {
-	// ID and Number are BOTH carried as upstream sends them. The internal API
-	// spells Number as a string; webapiv2 spells it as an int, and the two are
-	// not known to hold the same value. Neither is derived from the other --
-	// the equivalent assumption for employees needed an experiment to relax,
-	// and no such experiment has been run for customers.
+	// ID and Number are BOTH carried as upstream sends them.
+	//
+	// Verified 2026-09-07 against tenant 17221: webapiv2's CustomersList and
+	// the internal GetCustomersPaged2 return IDENTICAL id and number for the
+	// same customer, and Number is a STRING on both. The earlier note here --
+	// that webapiv2 spelled it as an int and the equivalence was unverified --
+	// was wrong on both counts.
+	//
+	// Number is allocated by Kala, never chosen, so it cannot key an upsert.
 	ID     int64
 	Number string
 
@@ -70,6 +74,10 @@ type Customer struct {
 	City      string
 	EAN       string
 	CaseCount int
+
+	// Description is carried by both write bodies and by the read payload.
+	// It is NOT yet mapped in toDomain -- that is the GREEN step.
+	Description string
 }
 
 // CustomerQuery controls a customer list read.

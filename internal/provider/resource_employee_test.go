@@ -223,6 +223,18 @@ func (f *fakeInternal) ListCustomers(context.Context, client.CustomerQuery) (cli
 	return client.CustomerScan{}, nil
 }
 
+func (f *fakeInternal) AddCustomer(context.Context, client.CustomerInput) (client.Customer, error) {
+	return client.Customer{}, nil
+}
+
+func (f *fakeInternal) EditCustomer(context.Context, int64, client.CustomerInput) (client.Customer, error) {
+	return client.Customer{}, nil
+}
+
+func (f *fakeInternal) GetCustomer(context.Context, int64) (client.Customer, error) {
+	return client.Customer{}, nil
+}
+
 func (f *fakeInternal) ListCases(context.Context, client.CaseQuery) (client.CaseScan, error) {
 	return client.CaseScan{}, nil
 }
