@@ -31,6 +31,14 @@ func diagsText(d diag.Diagnostics) string {
 type fakeInternal struct {
 	workers map[int64]client.Worker
 
+	tasks            map[int64]client.Task
+	taskIn           client.TaskInput
+	createTaskCalled bool
+	updateTaskCalled bool
+	createTaskErr    error
+	updateTaskErr    error
+	listTasksErr     error
+
 	cases            map[string]client.CaseDetail
 	caseIn           client.NewCase
 	fieldWrites      map[client.CaseField]string
@@ -127,7 +135,7 @@ func newFakeInternal(workers ...client.Worker) *fakeInternal {
 	for _, w := range workers {
 		m[w.WorkerNr] = w
 	}
-	return &fakeInternal{workers: m, customers: map[int64]client.Customer{}, customerID: 4, cases: map[string]client.CaseDetail{}}
+	return &fakeInternal{workers: m, customers: map[int64]client.Customer{}, customerID: 4, cases: map[string]client.CaseDetail{}, tasks: map[int64]client.Task{}}
 }
 
 func (f *fakeInternal) ListWorkers(context.Context) ([]client.Worker, error) {
@@ -307,12 +315,36 @@ func (f *fakeInternal) GetCase(_ context.Context, caseNumber string) (client.Cas
 	return d, nil
 }
 
-func (f *fakeInternal) CreateTask(context.Context, client.TaskInput) (client.Task, error) {
-	return client.Task{}, nil
+func (f *fakeInternal) CreateTask(_ context.Context, in client.TaskInput) (client.Task, error) {
+	f.createTaskCalled = true
+	f.taskIn = in
+	if f.createTaskErr != nil {
+		return client.Task{ID: 9}, f.createTaskErr
+	}
+	k := taskFrom(9, in)
+	f.tasks[9] = k
+	return k, nil
 }
 
-func (f *fakeInternal) UpdateTask(context.Context, int64, client.TaskInput) (client.Task, error) {
-	return client.Task{}, nil
+func (f *fakeInternal) UpdateTask(_ context.Context, id int64, in client.TaskInput) (client.Task, error) {
+	f.updateTaskCalled = true
+	f.taskIn = in
+	if f.updateTaskErr != nil {
+		return client.Task{ID: id}, f.updateTaskErr
+	}
+	k := taskFrom(id, in)
+	f.tasks[id] = k
+	return k, nil
+}
+
+func taskFrom(id int64, in client.TaskInput) client.Task {
+	return client.Task{
+		ID: id, Name: in.Name, Description: in.Description,
+		CaseID: in.CaseID, CaseNumber: in.CaseNumber,
+		Deadline: in.Deadline, NoteRequired: in.NoteRequired,
+		ImageRequired: in.ImageRequired, InvoiceMode: in.InvoiceMode,
+		PriceFixed: in.PriceFixed,
+	}
 }
 
 func (f *fakeInternal) CreateCase(_ context.Context, in client.NewCase) (client.CaseDetail, error) {
@@ -371,8 +403,18 @@ func (f *fakeInternal) SetCaseField(_ context.Context, caseNumber string, field 
 	return nil
 }
 
-func (f *fakeInternal) ListTasks(context.Context, client.TaskQuery) (client.TaskScan, error) {
-	return client.TaskScan{}, nil
+func (f *fakeInternal) ListTasks(_ context.Context, q client.TaskQuery) (client.TaskScan, error) {
+	if f.listTasksErr != nil {
+		return client.TaskScan{}, f.listTasksErr
+	}
+	scan := client.TaskScan{}
+	for _, k := range f.tasks {
+		if k.CaseID == q.CaseID || q.CaseID == 0 {
+			scan.Tasks = append(scan.Tasks, k)
+		}
+	}
+	scan.Total, scan.Fetched = len(scan.Tasks), len(scan.Tasks)
+	return scan, nil
 }
 
 var _ client.InternalClient = (*fakeInternal)(nil)
