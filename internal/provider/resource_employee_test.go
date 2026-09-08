@@ -288,6 +288,14 @@ func (f *fakeInternal) GetCase(context.Context, string) (client.CaseDetail, erro
 	return client.CaseDetail{}, nil
 }
 
+func (f *fakeInternal) CreateTask(context.Context, client.TaskInput) (client.Task, error) {
+	return client.Task{}, nil
+}
+
+func (f *fakeInternal) UpdateTask(context.Context, int64, client.TaskInput) (client.Task, error) {
+	return client.Task{}, nil
+}
+
 func (f *fakeInternal) CreateCase(context.Context, client.NewCase) (client.CaseDetail, error) {
 	return client.CaseDetail{}, nil
 }

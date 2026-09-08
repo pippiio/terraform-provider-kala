@@ -181,6 +181,14 @@ type InternalClient interface {
 	// internal project. Always sends updateCustomerAddress:false.
 	SetCaseCustomer(ctx context.Context, caseNumber string, customerID int64, internalProject bool) error
 
+	// CreateTask creates a checklist item and returns it with the id Kala
+	// allocated. Verified by read-back (ARCH1.8).
+	CreateTask(ctx context.Context, in TaskInput) (Task, error)
+
+	// UpdateTask replaces a checklist item. FULL-RECORD REPLACE: an omitted
+	// field is blanked upstream, so callers must read-modify-write.
+	UpdateTask(ctx context.Context, cliID int64, in TaskInput) (Task, error)
+
 	// ListTasks reads the checklist items of one case. q.CaseID is required.
 	ListTasks(ctx context.Context, q TaskQuery) (TaskScan, error)
 }
