@@ -169,6 +169,18 @@ type InternalClient interface {
 	// rather than remembered. A mismatch is ErrConflict, not a retryable 5xx.
 	SetCaseField(ctx context.Context, caseNumber string, field CaseField, value string) error
 
+	// CreateCase creates a case and returns it with the identity Kala
+	// allocated. Always sends newCustomer:false (ADR-003).
+	CreateCase(ctx context.Context, in NewCase) (CaseDetail, error)
+
+	// SetCaseArchived archives or unarchives a case, verified by set
+	// membership because `archived` is not a response field.
+	SetCaseArchived(ctx context.Context, caseNumber string, archived bool) error
+
+	// SetCaseCustomer reassigns a case's customer, or converts it to an
+	// internal project. Always sends updateCustomerAddress:false.
+	SetCaseCustomer(ctx context.Context, caseNumber string, customerID int64, internalProject bool) error
+
 	// ListTasks reads the checklist items of one case. q.CaseID is required.
 	ListTasks(ctx context.Context, q TaskQuery) (TaskScan, error)
 }

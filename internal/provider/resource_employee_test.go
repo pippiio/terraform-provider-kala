@@ -288,6 +288,14 @@ func (f *fakeInternal) GetCase(context.Context, string) (client.CaseDetail, erro
 	return client.CaseDetail{}, nil
 }
 
+func (f *fakeInternal) CreateCase(context.Context, client.NewCase) (client.CaseDetail, error) {
+	return client.CaseDetail{}, nil
+}
+
+func (f *fakeInternal) SetCaseArchived(context.Context, string, bool) error { return nil }
+
+func (f *fakeInternal) SetCaseCustomer(context.Context, string, int64, bool) error { return nil }
+
 func (f *fakeInternal) SetCaseField(context.Context, string, client.CaseField, string) error {
 	return nil
 }
