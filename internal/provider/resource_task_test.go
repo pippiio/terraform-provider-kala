@@ -364,3 +364,237 @@ func TestImportTask_MalformedIDIsAClearError(t *testing.T) {
 		}
 	}
 }
+
+func TestProvider_RegistersTaskResource(t *testing.T) {
+	var found bool
+	for _, f := range New("test")().(*kalaProvider).Resources(context.Background()) {
+		resp := &resource.MetadataResponse{}
+		f().Metadata(context.Background(), resource.MetadataRequest{ProviderTypeName: "kala"}, resp)
+		if resp.TypeName == "kala_task" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("kala_task is not registered; an unregistered resource is unreachable")
+	}
+}
+
+// Absent from an INCOMPLETE read proves nothing. Treating it as drift would
+// drop a live item from state and create a duplicate on the next apply --
+// which Kala could then never delete.
+func TestReadTask_UnprovenAbsenceKeepsStateAndErrors(t *testing.T) {
+	fi := fakeWithCase()
+	// One item on the case, but the scan reports more exist than it returned.
+	fi.tasks[1] = client.Task{ID: 1, CaseID: 4, CaseNumber: "KA-4", Name: "Another"}
+	fi.truncateTasks = true
+	r := newTaskResource(fi)
+
+	resp := &resource.ReadResponse{State: taskResState(t, existingTask())}
+	r.Read(context.Background(), resource.ReadRequest{State: taskResState(t, existingTask())}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("an unprovable absence must be an error, not silent drift")
+	}
+	if resp.State.Raw.IsNull() {
+		t.Error("state was removed on an UNPROVEN absence; that duplicates a live item")
+	}
+}
+
+func TestReadTask_ListFailurePropagates(t *testing.T) {
+	fi := fakeWithCase()
+	fi.listTasksErr = errContext("upstream exploded")
+	r := newTaskResource(fi)
+
+	resp := &resource.ReadResponse{State: taskResState(t, existingTask())}
+	r.Read(context.Background(), resource.ReadRequest{State: taskResState(t, existingTask())}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a read failure must be an error, not drift")
+	}
+}
+
+func TestUpdateTask_FailurePropagates(t *testing.T) {
+	fi := fakeWithCase()
+	fi.tasks[9] = client.Task{ID: 9, CaseID: 4, CaseNumber: "KA-4"}
+	fi.updateTaskErr = errContext("kala refused")
+	r := newTaskResource(fi)
+
+	state := existingTask()
+	plan := existingTask()
+	plan.Name = types.StringValue("Changed")
+
+	resp := &resource.UpdateResponse{State: taskResState(t, state)}
+	r.Update(context.Background(),
+		resource.UpdateRequest{Plan: taskResPlan(t, plan), State: taskResState(t, state)}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a failed update must report an error")
+	}
+}
+
+func TestUpdateTask_InvalidDeadlineIsRejectedBeforeWriting(t *testing.T) {
+	fi := fakeWithCase()
+	fi.tasks[9] = client.Task{ID: 9, CaseID: 4, CaseNumber: "KA-4"}
+	r := newTaskResource(fi)
+
+	state := existingTask()
+	plan := existingTask()
+	plan.Deadline = types.StringValue("whenever")
+
+	resp := &resource.UpdateResponse{State: taskResState(t, state)}
+	r.Update(context.Background(),
+		resource.UpdateRequest{Plan: taskResPlan(t, plan), State: taskResState(t, state)}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("an unparseable deadline must be rejected")
+	}
+	if fi.updateTaskCalled {
+		t.Error("a bad deadline reached an upstream write")
+	}
+}
+
+// A task whose case has an assignee reads it back; the attribute is Computed,
+// so it must be populated rather than left null.
+func TestReadTask_AssigneeIsSurfacedReadOnly(t *testing.T) {
+	fi := fakeWithCase()
+	nr := int64(3)
+	fi.tasks[9] = client.Task{
+		ID: 9, CaseID: 4, CaseNumber: "KA-4", Name: "Mount gutter",
+		AssigneeWorkerNr: &nr,
+	}
+	r := newTaskResource(fi)
+
+	resp := &resource.ReadResponse{State: taskResState(t, existingTask())}
+	r.Read(context.Background(), resource.ReadRequest{State: taskResState(t, existingTask())}, resp)
+
+	var got taskResourceModel
+	resp.State.Get(context.Background(), &got)
+	if got.AssigneeWorkerNr.ValueInt64() != 3 {
+		t.Errorf("assignee = %v, want 3 surfaced read-only", got.AssigneeWorkerNr)
+	}
+}
+
+func TestTaskResource_WithoutInternalCredentialsIsAClearError(t *testing.T) {
+	r := &taskResource{clients: &providerClients{Web: &fakeClient{}}}
+	m := existingTask()
+
+	create := &resource.CreateResponse{State: emptyTaskResState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: taskResPlan(t, m)}, create)
+	read := &resource.ReadResponse{State: taskResState(t, m)}
+	r.Read(context.Background(), resource.ReadRequest{State: taskResState(t, m)}, read)
+	update := &resource.UpdateResponse{State: taskResState(t, m)}
+	r.Update(context.Background(),
+		resource.UpdateRequest{Plan: taskResPlan(t, m), State: taskResState(t, m)}, update)
+
+	for name, d := range map[string]int{
+		"Create": len(create.Diagnostics), "Read": len(read.Diagnostics),
+		"Update": len(update.Diagnostics),
+	} {
+		if d == 0 {
+			t.Errorf("%s without internal credentials must be a clear error", name)
+		}
+	}
+}
+
+func TestTaskResource_UndecodablePlanOrStateStopsTheOperation(t *testing.T) {
+	fi := fakeWithCase()
+	r := newTaskResource(fi)
+	broken := tfsdk.Plan{Schema: taskResSchema(t), Raw: tftypes.Value{}}
+	brokenState := tfsdk.State{Schema: taskResSchema(t), Raw: tftypes.Value{}}
+
+	create := &resource.CreateResponse{State: emptyTaskResState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: broken}, create)
+	read := &resource.ReadResponse{State: emptyTaskResState(t)}
+	r.Read(context.Background(), resource.ReadRequest{State: brokenState}, read)
+	update := &resource.UpdateResponse{State: emptyTaskResState(t)}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: broken, State: brokenState}, update)
+	del := &resource.DeleteResponse{State: emptyTaskResState(t)}
+	r.Delete(context.Background(), resource.DeleteRequest{State: brokenState}, del)
+
+	for name, n := range map[string]int{
+		"Create": len(create.Diagnostics), "Read": len(read.Diagnostics),
+		"Update": len(update.Diagnostics), "Delete": len(del.Diagnostics),
+	} {
+		if n == 0 {
+			t.Errorf("%s accepted an undecodable plan/state", name)
+		}
+	}
+	if fi.createTaskCalled || fi.updateTaskCalled {
+		t.Error("an undecodable plan reached an upstream write")
+	}
+}
+
+func TestTaskResource_Configure(t *testing.T) {
+	r := &taskResource{}
+	resp := &resource.ConfigureResponse{}
+	r.Configure(context.Background(), resource.ConfigureRequest{}, resp)
+	if r.clients != nil || resp.Diagnostics.HasError() {
+		t.Error("nil ProviderData is the framework's first call, not an error")
+	}
+	want := &providerClients{Web: &fakeClient{}, Internal: newFakeInternal()}
+	r.Configure(context.Background(), resource.ConfigureRequest{ProviderData: want}, resp)
+	if r.clients != want {
+		t.Error("Configure did not store the provider clients")
+	}
+}
+
+// A task need not have a deadline. Null must travel as "no deadline", not as
+// a zero time, which would write 0001-01-01 upstream.
+func TestCreateTask_NoDeadlineIsNull(t *testing.T) {
+	fi := fakeWithCase()
+	r := newTaskResource(fi)
+
+	plan := plannedTask()
+	plan.Deadline = types.StringNull()
+
+	resp := &resource.CreateResponse{State: emptyTaskResState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: taskResPlan(t, plan)}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("create failed: %s", diagsText(resp.Diagnostics))
+	}
+	if fi.taskIn.Deadline != nil {
+		t.Errorf("deadline = %v, want nil when unset", fi.taskIn.Deadline)
+	}
+	var got taskResourceModel
+	resp.State.Get(context.Background(), &got)
+	if !got.Deadline.IsNull() {
+		t.Errorf("deadline = %v, want null in state", got.Deadline)
+	}
+}
+
+// The partial-create path must leave nothing unknown in state: the framework
+// treats an unknown value after apply as a provider error, and the next Read
+// is what fills these in honestly.
+func TestCreateTask_PartialCreateResolvesUnknownsToNull(t *testing.T) {
+	fi := fakeWithCase()
+	fi.createTaskErr = errContext("read-back failed")
+	r := newTaskResource(fi)
+
+	plan := plannedTask()
+	plan.Description = types.StringUnknown()
+	plan.InvoiceMode = types.StringUnknown()
+	plan.Deadline = types.StringUnknown()
+
+	resp := &resource.CreateResponse{State: emptyTaskResState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: taskResPlan(t, plan)}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a failed create must report an error")
+	}
+	var got taskResourceModel
+	resp.State.Get(context.Background(), &got)
+	for name, v := range map[string]bool{
+		"description":  got.Description.IsUnknown(),
+		"invoice_mode": got.InvoiceMode.IsUnknown(),
+		"deadline":     got.Deadline.IsUnknown(),
+		"is_finished":  got.IsFinished.IsUnknown(),
+	} {
+		if v {
+			t.Errorf("%s reached state unknown; the framework treats that as a provider error", name)
+		}
+	}
+	if got.ID.ValueInt64() != 9 {
+		t.Error("the allocated id must still be recorded")
+	}
+}

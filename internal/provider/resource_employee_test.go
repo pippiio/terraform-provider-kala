@@ -38,6 +38,7 @@ type fakeInternal struct {
 	createTaskErr    error
 	updateTaskErr    error
 	listTasksErr     error
+	truncateTasks    bool
 
 	cases            map[string]client.CaseDetail
 	caseIn           client.NewCase
@@ -414,6 +415,9 @@ func (f *fakeInternal) ListTasks(_ context.Context, q client.TaskQuery) (client.
 		}
 	}
 	scan.Total, scan.Fetched = len(scan.Tasks), len(scan.Tasks)
+	if f.truncateTasks {
+		scan.Total = scan.Fetched + 50
+	}
 	return scan, nil
 }
 
