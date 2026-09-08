@@ -189,6 +189,22 @@ type InternalClient interface {
 	// field is blanked upstream, so callers must read-modify-write.
 	UpdateTask(ctx context.Context, cliID int64, in TaskInput) (Task, error)
 
+	// EnsureJobLink links a worker to a case and returns the link, whose ID is
+	// the jobLinkId SetJobLinkChecklist takes.
+	EnsureJobLink(ctx context.Context, caseID, workerNr int64) (JobLink, error)
+
+	// SetJobLinkChecklist REPLACES the set of items a job link covers.
+	SetJobLinkChecklist(ctx context.Context, jobLinkID int64, ids []int64) error
+
+	// RemoveJobLinkChecklistItem detaches one item from a worker's link. Needs
+	// no jobLinkId.
+	RemoveJobLinkChecklistItem(ctx context.Context, caseNumber string, checklistItemID, workerNr int64) error
+
+	// AssignedTaskIDs reports which of a case's items a worker is linked to.
+	// The read path is the task list, not a job-link endpoint -- Kala exposes
+	// no way to read a link directly.
+	AssignedTaskIDs(ctx context.Context, caseID, workerNr int64) ([]int64, error)
+
 	// ListTasks reads the checklist items of one case. q.CaseID is required.
 	ListTasks(ctx context.Context, q TaskQuery) (TaskScan, error)
 }

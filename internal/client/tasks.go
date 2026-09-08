@@ -22,9 +22,11 @@
 //      missing totalCount to zero would report an unknown case as an empty
 //      one, and report the read as complete.
 //   4. Filter by assignee client-side; upstream has no request parameter for
-//      it. Only respWorkerNr is used: workersAssigned was never observed
-//      populated, so its element shape is unknown and guessing it would be
-//      inventing a contract.
+//      it. respWorkerNr is the RESPONSIBLE worker; workersAssigned is the set
+//      of workers linked to the item, and both are exposed. The comment here
+//      previously said workersAssigned had never been observed populated --
+//      true when written, because nothing had ever been assigned in the
+//      development tenant, and disproved on 2026-09-08 once one was.
 //   5. Parse .NET /Date(ms)/ on deadline, timeAdded, and timeFinished.
 //   6. Report coverage from records RECEIVED, not records surviving the
 //      client-side filter. Filtering is the caller asking for less; it must
@@ -62,11 +64,16 @@ type Task struct {
 	// company-wide kanban_options setting.
 	StatusName string
 
-	// AssigneeWorkerNr is respWorkerNr, nil when unassigned. It is the only
-	// assignee signal used: workersAssigned was never observed populated.
+	// AssigneeWorkerNr is respWorkerNr, nil when unassigned -- the RESPONSIBLE
+	// worker, which is distinct from the set linked to the item below.
 	AssigneeWorkerNr *int64
-	AssignedToMe     bool
-	CreatedBy        string
+
+	// AssignedWorkerNrs are the employee numbers linked to this item. Only
+	// identifiers are carried: the upstream collection also holds names,
+	// phone numbers, and titles, which are personal data (SEC1.5).
+	AssignedWorkerNrs []int64
+	AssignedToMe      bool
+	CreatedBy         string
 
 	Deadline  *time.Time
 	TimeAdded *time.Time
@@ -96,6 +103,11 @@ type TaskQuery struct {
 
 	// AssigneeWorkerNr filters CLIENT-SIDE; upstream offers no parameter for it.
 	AssigneeWorkerNr *int64
+
+	// AssignedWorkerNrs are the employee numbers linked to this item. Only
+	// identifiers are carried: the upstream collection also holds names,
+	// phone numbers, and titles, which are personal data (SEC1.5).
+	AssignedWorkerNrs []int64
 
 	PageSize int
 	MaxPages int
@@ -134,6 +146,13 @@ type wireTask struct {
 	StatusName  string `json:"statusName"`
 
 	RespWorkerNr *int64 `json:"respWorkerNr"`
+
+	// WorkersAssigned is the set of workers linked to this item through their
+	// job link on the case. Observed 2026-09-08; carries personal data
+	// (name, phone, title), of which only the identifier is mapped (SEC1.5).
+	WorkersAssigned []struct {
+		WorkerNr int64 `json:"workerNr"`
+	} `json:"workersAssigned"`
 	AssignedToMe bool   `json:"assignedToMe"`
 	CreatedBy    string `json:"createdBy"`
 
@@ -184,12 +203,13 @@ func (w wireTask) toDomain() (Task, error) {
 	t := Task{
 		ID: w.ID, Name: w.Name, Description: w.Description,
 		CaseID: w.CaseID, CaseNumber: w.CaseNr, ChecklistID: w.ChecklistID,
-		StatusName:       w.StatusName,
-		AssigneeWorkerNr: w.RespWorkerNr,
-		AssignedToMe:     w.AssignedToMe,
-		CreatedBy:        w.CreatedBy,
-		IsFinished:       w.IsFinished,
-		FinishedBy:       w.WorkerFinishedBy,
+		StatusName:        w.StatusName,
+		AssigneeWorkerNr:  w.RespWorkerNr,
+		AssignedWorkerNrs: assignedNumbers(w.WorkersAssigned),
+		AssignedToMe:      w.AssignedToMe,
+		CreatedBy:         w.CreatedBy,
+		IsFinished:        w.IsFinished,
+		FinishedBy:        w.WorkerFinishedBy,
 
 		RegisteredHoursTotal: w.RegisteredHoursTotal,
 		BilledHours:          w.BilledHours,
@@ -309,4 +329,22 @@ func (c *internalAPI) ListTasks(ctx context.Context, q TaskQuery) (TaskScan, err
 	}
 
 	return scan, nil
+}
+
+// assignedNumbers reduces the workersAssigned collection to identifiers.
+//
+// The upstream elements also carry name, phone, and title. Those are personal
+// data and are deliberately dropped at this boundary rather than carried into
+// the domain and filtered later (SEC1.5).
+func assignedNumbers(in []struct {
+	WorkerNr int64 `json:"workerNr"`
+}) []int64 {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]int64, 0, len(in))
+	for _, w := range in {
+		out = append(out, w.WorkerNr)
+	}
+	return out
 }

@@ -31,6 +31,16 @@ func diagsText(d diag.Diagnostics) string {
 type fakeInternal struct {
 	workers map[int64]client.Worker
 
+	ensureLinkCalls   [][2]int64
+	setChecklistCalls [][]int64
+	removedItems      []int64
+	lastJobLinkID     int64
+	linkWorker        int64
+	ensureLinkErr     error
+	setChecklistErr   error
+	removeItemErr     error
+	assignedErr       error
+
 	tasks            map[int64]client.Task
 	taskIn           client.TaskInput
 	createTaskCalled bool
@@ -314,6 +324,75 @@ func (f *fakeInternal) GetCase(_ context.Context, caseNumber string) (client.Cas
 		return client.CaseDetail{}, fmt.Errorf("case %s: %w", caseNumber, client.ErrNotFound)
 	}
 	return d, nil
+}
+
+func (f *fakeInternal) EnsureJobLink(_ context.Context, caseID, workerNr int64) (client.JobLink, error) {
+	f.ensureLinkCalls = append(f.ensureLinkCalls, [2]int64{caseID, workerNr})
+	if f.ensureLinkErr != nil {
+		return client.JobLink{}, f.ensureLinkErr
+	}
+	return client.JobLink{ID: 7, CaseID: caseID, CaseNumber: "KA-4", WorkerNr: workerNr}, nil
+}
+
+func (f *fakeInternal) SetJobLinkChecklist(_ context.Context, jobLinkID int64, ids []int64) error {
+	f.setChecklistCalls = append(f.setChecklistCalls, ids)
+	f.lastJobLinkID = jobLinkID
+	if f.setChecklistErr != nil {
+		return f.setChecklistErr
+	}
+	// Reflect into the task list, which is where the read path looks.
+	for id, k := range f.tasks {
+		k.AssignedWorkerNrs = withoutWorker(k.AssignedWorkerNrs, f.linkWorker)
+		f.tasks[id] = k
+	}
+	for _, id := range ids {
+		if k, ok := f.tasks[id]; ok {
+			k.AssignedWorkerNrs = append(k.AssignedWorkerNrs, f.linkWorker)
+			f.tasks[id] = k
+		}
+	}
+	return nil
+}
+
+func (f *fakeInternal) RemoveJobLinkChecklistItem(_ context.Context, caseNumber string, itemID, workerNr int64) error {
+	f.removedItems = append(f.removedItems, itemID)
+	if f.removeItemErr != nil {
+		return f.removeItemErr
+	}
+	if k, ok := f.tasks[itemID]; ok {
+		k.AssignedWorkerNrs = withoutWorker(k.AssignedWorkerNrs, workerNr)
+		f.tasks[itemID] = k
+	}
+	return nil
+}
+
+func (f *fakeInternal) AssignedTaskIDs(_ context.Context, caseID, workerNr int64) ([]int64, error) {
+	if f.assignedErr != nil {
+		return nil, f.assignedErr
+	}
+	var ids []int64
+	for id, k := range f.tasks {
+		if k.CaseID != caseID {
+			continue
+		}
+		for _, nr := range k.AssignedWorkerNrs {
+			if nr == workerNr {
+				ids = append(ids, id)
+				break
+			}
+		}
+	}
+	return ids, nil
+}
+
+func withoutWorker(in []int64, nr int64) []int64 {
+	out := in[:0]
+	for _, v := range in {
+		if v != nr {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func (f *fakeInternal) CreateTask(_ context.Context, in client.TaskInput) (client.Task, error) {
