@@ -478,9 +478,15 @@ func (c *internalAPI) authedRequest(
 }
 
 // wireStatusEnvelope is the failure shape the internal API returns WITH HTTP 200.
+//
+// Success is a *bool rather than a bool because ABSENT and FALSE mean opposite
+// things here. Almost every response omits the field entirely, and only an
+// explicit false is a refusal -- the same rule already applied to Status, where
+// only an explicit "Error" counts.
 type wireStatusEnvelope struct {
 	Status  string `json:"status"`
 	Message string `json:"message"`
+	Success *bool  `json:"success"`
 }
 
 // errorEnvelope turns Kala's in-body failure report into a real error.
@@ -492,10 +498,20 @@ type wireStatusEnvelope struct {
 // and only the read-back verification noticed something was wrong. That made a
 // precise, translated explanation from Kala surface as a generic mismatch.
 //
-// Successful writes answer either {"status":"Success"} or a small data object
-// with no status field at all, so only an explicit "Error" is treated as a
-// failure. Anything that does not decode as a JSON object — the Workers list is
-// an array — is passed through untouched.
+// Successful writes answer in FOUR shapes: {"status":"Success"}, a small data
+// object with no status field at all, a JSON array, and — OBSERVED 2026-09-08
+// on the case field-setters (RenameCase, ChangeCaseAddress, ChangeCaseZip,
+// RenameCaseCustomerPhoneNumber) — {"success":true,...}.
+//
+// That fourth shape is why `success` is checked here. Recognising only
+// {"status":"Error"} would let a {"success":false} refusal through as a
+// success, leaving read-back as the only thing that noticed — precisely the
+// defect this function was written to eliminate, arriving through a different
+// field name.
+//
+// Only an EXPLICIT negative is a failure in either field. Anything that does
+// not decode as a JSON object — the Workers list is an array — is passed
+// through untouched.
 func errorEnvelope(raw []byte, err error) error {
 	if err != nil {
 		return err
@@ -505,7 +521,10 @@ func errorEnvelope(raw []byte, err error) error {
 	if json.Unmarshal(raw, &env) != nil {
 		return nil
 	}
-	if !strings.EqualFold(env.Status, "Error") {
+
+	refused := strings.EqualFold(env.Status, "Error") ||
+		(env.Success != nil && !*env.Success)
+	if !refused {
 		return nil
 	}
 
