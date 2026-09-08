@@ -28,6 +28,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -214,21 +215,277 @@ func (r *caseResource) Configure(_ context.Context, req resource.ConfigureReques
 	}
 }
 
-var (
-	_ = errors.Is
-	_ = fmt.Sprintf
-	_ = tflog.Debug
-	_ client.InternalClient
-)
+// applyCase writes an upstream record over the model.
+func applyCase(m *caseResourceModel, d client.CaseDetail) {
+	m.ID = types.Int64Value(d.ID)
+	m.Number = types.StringValue(d.Number)
+	m.Name = types.StringValue(d.Name)
+	m.Address = types.StringValue(d.Address)
+	m.Zip = types.StringValue(d.Zip)
+	m.ContactPhone = types.StringValue(d.CustomerPhone)
+	m.InternalProject = types.BoolValue(d.InternalProject)
+	m.Archived = types.BoolValue(d.Archived)
+	m.CustomerCompany = types.StringValue(d.CustomerCompany)
+	m.IsFinished = types.BoolValue(d.IsFinished)
+	if d.CustomerID == 0 {
+		m.CustomerID = types.Int64Null()
+	} else {
+		m.CustomerID = types.Int64Value(d.CustomerID)
+	}
+}
 
-// --- stubs (RED) -----------------------------------------------------------
+func (r *caseResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	var plan caseResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	internal, ok := r.clients.requireInternal(&resp.Diagnostics)
+	if !ok {
+		return
+	}
 
-func (r *caseResource) Create(_ context.Context, _ resource.CreateRequest, _ *resource.CreateResponse) {
+	created, err := internal.CreateCase(ctx, client.NewCase{
+		Name:            plan.Name.ValueString(),
+		WorkerNr:        plan.WorkerNumber.ValueInt64(),
+		CustomerNumber:  plan.CustomerNumber.ValueString(),
+		InternalProject: plan.InternalProject.ValueBool(),
+		Address:         plan.Address.ValueString(),
+		Zip:             plan.Zip.ValueString(),
+	})
+	if err != nil {
+		// The case exists upstream and Kala has no delete, so its identity is
+		// recorded before the failure is surfaced (FR5). Without this the next
+		// apply creates a SECOND case rather than converging this one.
+		if created.Number != "" {
+			r.recordPartialCase(ctx, plan, created, resp)
+		}
+		resp.Diagnostics.AddError(
+			"Could not create the Kala case",
+			fmt.Sprintf("Case %q.\n\nError: %s", plan.Name.ValueString(), err.Error()),
+		)
+		return
+	}
+
+	applyCase(&plan, created)
+	if plan.ContactPhone.IsUnknown() {
+		plan.ContactPhone = types.StringNull()
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	tflog.Debug(ctx, "created case", map[string]any{"id": created.ID, "number": created.Number})
 }
-func (r *caseResource) Read(_ context.Context, _ resource.ReadRequest, _ *resource.ReadResponse) {}
-func (r *caseResource) Update(_ context.Context, _ resource.UpdateRequest, _ *resource.UpdateResponse) {
+
+func (r *caseResource) recordPartialCase(
+	ctx context.Context, plan caseResourceModel, created client.CaseDetail, resp *resource.CreateResponse,
+) {
+	plan.ID = types.Int64Value(created.ID)
+	plan.Number = types.StringValue(created.Number)
+	for _, p := range []*types.String{
+		&plan.Address, &plan.Zip, &plan.ContactPhone, &plan.CustomerCompany,
+	} {
+		if p.IsUnknown() {
+			*p = types.StringNull()
+		}
+	}
+	if plan.CustomerID.IsUnknown() {
+		plan.CustomerID = types.Int64Null()
+	}
+	if plan.IsFinished.IsUnknown() {
+		plan.IsFinished = types.BoolValue(false)
+	}
+
+	resp.Diagnostics.AddWarning(
+		"Case was created, but the apply did not finish",
+		fmt.Sprintf(
+			"Case %s was created in Kala and a later step failed (see the error below). Kala "+
+				"has no delete endpoint, so this case exists permanently; `terraform destroy` "+
+				"can archive it but not remove it.\n\n"+
+				"Terraform has recorded it in state rather than abandoning it. Apply again to "+
+				"finish converging it; without this the next apply would create a SECOND case.",
+			created.Number),
+	)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
-func (r *caseResource) Delete(_ context.Context, _ resource.DeleteRequest, _ *resource.DeleteResponse) {
+
+func (r *caseResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	var state caseResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	internal, ok := r.clients.requireInternal(&resp.Diagnostics)
+	if !ok {
+		return
+	}
+
+	got, err := internal.GetCase(ctx, state.Number.ValueString())
+	if err != nil {
+		if errors.Is(err, client.ErrNotFound) {
+			tflog.Debug(ctx, "case is gone upstream; removing from state",
+				map[string]any{"number": state.Number.ValueString()})
+			resp.State.RemoveResource(ctx)
+			return
+		}
+		resp.Diagnostics.AddError(
+			"Could not read the Kala case",
+			fmt.Sprintf("Case %s.\n\nError: %s", state.Number.ValueString(), err.Error()),
+		)
+		return
+	}
+
+	applyCase(&state, got)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
-func (r *caseResource) ImportState(_ context.Context, _ resource.ImportStateRequest, _ *resource.ImportStateResponse) {
+
+// Update writes FIELD BY FIELD, and only what changed.
+//
+// Cases are per-field upstream, so omission is safe -- the inverse of
+// kala_customer. Writing an unchanged value would also be a no-op against a
+// compare-and-swap endpoint, which is a race that can only lose.
+func (r *caseResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan, state caseResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	internal, ok := r.clients.requireInternal(&resp.Diagnostics)
+	if !ok {
+		return
+	}
+
+	number := state.Number.ValueString()
+
+	for _, f := range []struct {
+		field      client.CaseField
+		want, have types.String
+		label      string
+	}{
+		{client.CaseFieldName, plan.Name, state.Name, "name"},
+		{client.CaseFieldAddress, plan.Address, state.Address, "address"},
+		{client.CaseFieldZip, plan.Zip, state.Zip, "zip"},
+		{client.CaseFieldContactPhone, plan.ContactPhone, state.ContactPhone, "contact_phone"},
+	} {
+		if f.want.IsNull() || f.want.IsUnknown() || f.want.Equal(f.have) {
+			continue
+		}
+		if err := internal.SetCaseField(ctx, number, f.field, f.want.ValueString()); err != nil {
+			resp.Diagnostics.AddError(
+				fmt.Sprintf("Could not change the case %s", f.label),
+				conflictHint(fmt.Sprintf("Case %s.\n\nError: %s", number, err.Error()), err),
+			)
+			return
+		}
+	}
+
+	if !plan.InternalProject.Equal(state.InternalProject) ||
+		!plan.CustomerNumber.Equal(state.CustomerNumber) {
+		if err := internal.SetCaseCustomer(
+			ctx, number, state.CustomerID.ValueInt64(), plan.InternalProject.ValueBool(),
+		); err != nil {
+			resp.Diagnostics.AddError(
+				"Could not change the case customer",
+				fmt.Sprintf("Case %s.\n\nError: %s", number, err.Error()),
+			)
+			return
+		}
+	}
+
+	if !plan.Archived.Equal(state.Archived) {
+		if err := internal.SetCaseArchived(ctx, number, plan.Archived.ValueBool()); err != nil {
+			resp.Diagnostics.AddError(
+				"Could not change the case archived state",
+				fmt.Sprintf("Case %s.\n\nError: %s", number, err.Error()),
+			)
+			return
+		}
+	}
+
+	got, err := internal.GetCase(ctx, number)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"The case could not be read back after updating",
+			fmt.Sprintf("Case %s.\n\nError: %s", number, err.Error()),
+		)
+		return
+	}
+	applyCase(&plan, got)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// conflictHint turns Kala's compare-and-swap refusal into advice.
+func conflictHint(detail string, err error) string {
+	if !errors.Is(err, client.ErrConflict) {
+		return detail
+	}
+	return detail + "\n\nThis means the case was changed in Kala after Terraform read it. " +
+		"Run `terraform refresh` (or plan again) and re-apply; the change was NOT made."
+}
+
+// Delete ARCHIVES the case (ADR-003, superseding ADR-001 for cases only).
+//
+// A failed archive is an error, not a warning: reporting a teardown that did
+// not happen is the worst available outcome.
+func (r *caseResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	var state caseResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	internal, ok := r.clients.requireInternal(&resp.Diagnostics)
+	if !ok {
+		return
+	}
+
+	number := state.Number.ValueString()
+	if err := internal.SetCaseArchived(ctx, number, true); err != nil {
+		if errors.Is(err, client.ErrNotFound) {
+			resp.Diagnostics.AddWarning(
+				"Case no longer exists in Kala",
+				fmt.Sprintf("Case %s could not be found, so there was nothing to archive.", number),
+			)
+			return
+		}
+		resp.Diagnostics.AddError(
+			"Could not archive the Kala case",
+			fmt.Sprintf("Case %s is still active in Kala. Destroy failed rather than reporting "+
+				"a teardown that did not happen.\n\nError: %s", number, err.Error()),
+		)
+		return
+	}
+
+	resp.Diagnostics.AddWarning(
+		"Case archived, not deleted",
+		fmt.Sprintf(
+			"Case %s (%q) has been ARCHIVED in Kala and removed from Terraform state.\n\n"+
+				"Kala provides no way to delete a case. Its checklist items, registered hours, "+
+				"and history all remain, and the case number stays in use. Archiving is "+
+				"reversible in the Kala UI; re-adding this resource would create a NEW case "+
+				"rather than adopting this one — use `terraform import %s` instead.",
+			number, state.Name.ValueString(), number),
+	)
+	tflog.Debug(ctx, "archived case on destroy", map[string]any{"number": number})
+}
+
+// ImportState accepts the STRING case number, which is what every case write
+// keys on. The integer id addresses a case only on reads.
+func (r *caseResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	number := strings.TrimSpace(req.ID)
+	if number == "" {
+		resp.Diagnostics.AddError(
+			"Invalid import ID for kala_case",
+			"Import expects the case NUMBER, for example:\n\n"+
+				"    terraform import kala_case.roof KA-4\n\n"+
+				"Not the integer id: writes address a case by its string number.",
+		)
+		return
+	}
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("number"), number)...)
+	resp.Diagnostics.AddWarning(
+		"Imported case is now managed by Terraform",
+		"Run `terraform plan` and reconcile the configuration with what Kala holds before "+
+			"applying. worker_number cannot be recovered — it is not part of the case record — "+
+			"so set it explicitly; changing it later forces replacement, which would create a "+
+			"second case.",
+	)
 }
