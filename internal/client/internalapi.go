@@ -162,6 +162,13 @@ type InternalClient interface {
 	// GetCase reads one case by its string case number.
 	GetCase(ctx context.Context, caseNumber string) (CaseDetail, error)
 
+	// SetCaseField sets one field on a case and verifies it by read-back.
+	//
+	// Reads the case first: every setter carries the value it expects to
+	// replace and Kala validates it, so the previous value must be current
+	// rather than remembered. A mismatch is ErrConflict, not a retryable 5xx.
+	SetCaseField(ctx context.Context, caseNumber string, field CaseField, value string) error
+
 	// ListTasks reads the checklist items of one case. q.CaseID is required.
 	ListTasks(ctx context.Context, q TaskQuery) (TaskScan, error)
 }
