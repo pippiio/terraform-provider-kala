@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	fwschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -81,6 +82,14 @@ func customerResState(t *testing.T, m customerResourceModel) tfsdk.State {
 func emptyCustomerResState(t *testing.T) tfsdk.State {
 	t.Helper()
 	return tfsdk.State{Schema: customerResSchema(t), Raw: tftypes.Value{}}
+}
+
+// nullCustomerResState is a TYPED null, which is what the framework hands an
+// importer. The untyped zero Value above cannot be written into.
+func nullCustomerResState(t *testing.T) tfsdk.State {
+	t.Helper()
+	typ := customerResSchema(t).Type().TerraformType(context.Background())
+	return tfsdk.State{Schema: customerResSchema(t), Raw: tftypes.NewValue(typ, nil)}
 }
 
 func customerResModelFor(company string) customerResourceModel {
@@ -264,7 +273,7 @@ func TestDeleteCustomer_WritesNothingUpstreamAndWarns(t *testing.T) {
 // allocates a new one rather than matching.
 func TestImportCustomer_ByNumericID(t *testing.T) {
 	r := newCustomerResource(newFakeInternal())
-	resp := &resource.ImportStateResponse{State: emptyCustomerResState(t)}
+	resp := &resource.ImportStateResponse{State: nullCustomerResState(t)}
 	r.ImportState(context.Background(), resource.ImportStateRequest{ID: "4"}, resp)
 
 	if resp.Diagnostics.HasError() {
@@ -279,10 +288,183 @@ func TestImportCustomer_ByNumericID(t *testing.T) {
 
 func TestImportCustomer_NonNumericIDIsAnError(t *testing.T) {
 	r := newCustomerResource(newFakeInternal())
-	resp := &resource.ImportStateResponse{State: emptyCustomerResState(t)}
+	resp := &resource.ImportStateResponse{State: nullCustomerResState(t)}
 	r.ImportState(context.Background(), resource.ImportStateRequest{ID: "KA-4"}, resp)
 
 	if !resp.Diagnostics.HasError() {
 		t.Error("import takes the numeric id, not the customer number; a number must be rejected clearly")
+	}
+}
+
+func TestProvider_RegistersCustomerResource(t *testing.T) {
+	var found bool
+	for _, f := range New("test")().(*kalaProvider).Resources(context.Background()) {
+		resp := &resource.MetadataResponse{}
+		f().Metadata(context.Background(), resource.MetadataRequest{ProviderTypeName: "kala"}, resp)
+		if resp.TypeName == "kala_customer" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("kala_customer is not registered; an unregistered resource is unreachable")
+	}
+}
+
+// Drift detection: Read must overwrite state with what Kala actually holds.
+// Without this the resource would report whatever it last wrote and never
+// notice a change made in the Kala UI.
+func TestReadCustomer_RefreshesFromUpstream(t *testing.T) {
+	fi := newFakeInternal()
+	fi.customers[4] = client.Customer{
+		ID: 4, Number: "KA-4", Company: "Renamed In The UI",
+		Email: "new@example.com", City: "Bree", CaseCount: 3,
+	}
+	r := newCustomerResource(fi)
+
+	m := customerResModelFor("Bag End Ltd")
+	m.ID, m.Number = types.Int64Value(4), types.StringValue("KA-4")
+	m.City, m.CaseCount = types.StringNull(), types.Int64Value(0)
+
+	resp := &resource.ReadResponse{State: customerResState(t, m)}
+	r.Read(context.Background(), resource.ReadRequest{State: customerResState(t, m)}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("read failed: %s", diagsText(resp.Diagnostics))
+	}
+	var got customerResourceModel
+	resp.State.Get(context.Background(), &got)
+	if got.Company.ValueString() != "Renamed In The UI" {
+		t.Errorf("company = %q; a change made upstream must surface as drift", got.Company.ValueString())
+	}
+	if got.CaseCount.ValueInt64() != 3 {
+		t.Errorf("case_count = %d, want 3 refreshed from upstream", got.CaseCount.ValueInt64())
+	}
+}
+
+// The distinction this resource turns on. GetCustomer separates "absent from a
+// complete read" (drift) from "absent from a TRUNCATED read" (unproven). Only
+// the first may remove state -- treating the second as deletion would drop a
+// live customer and create a duplicate on the next apply, which Kala cannot
+// then delete.
+func TestReadCustomer_UnprovenAbsenceKeepsStateAndErrors(t *testing.T) {
+	fi := newFakeInternal()
+	fi.getCustomerErr = errors.New("customer 4 was not in a read covering 50 of 900 records")
+	r := newCustomerResource(fi)
+
+	m := customerResModelFor("Bag End Ltd")
+	m.ID, m.Number = types.Int64Value(4), types.StringValue("KA-4")
+	m.City, m.CaseCount = types.StringNull(), types.Int64Value(0)
+
+	resp := &resource.ReadResponse{State: customerResState(t, m)}
+	r.Read(context.Background(), resource.ReadRequest{State: customerResState(t, m)}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("an unprovable absence must be an error, not silent drift")
+	}
+	if resp.State.Raw.IsNull() {
+		t.Error("state was removed on an UNPROVEN absence; that duplicates a live customer on the next apply")
+	}
+}
+
+func TestUpdateCustomer_FailurePropagates(t *testing.T) {
+	fi := newFakeInternal()
+	fi.customers[4] = client.Customer{ID: 4, Number: "KA-4", Company: "Old"}
+	fi.editCustomerErr = errors.New("kala rejected the request")
+	r := newCustomerResource(fi)
+
+	m := customerResModelFor("Bag End Ltd")
+	m.ID, m.Number = types.Int64Value(4), types.StringValue("KA-4")
+	m.City, m.CaseCount = types.StringNull(), types.Int64Value(0)
+
+	resp := &resource.UpdateResponse{State: customerResState(t, m)}
+	r.Update(context.Background(),
+		resource.UpdateRequest{Plan: customerResPlan(t, m), State: customerResState(t, m)}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("a failed update must report an error rather than a write that did not happen")
+	}
+}
+
+// Every write path needs the internal API; the api_key alone cannot reach it.
+func TestCustomerResource_WithoutInternalCredentialsIsAClearError(t *testing.T) {
+	r := &customerResource{clients: &providerClients{Web: &fakeClient{}}}
+	m := customerResModelFor("Bag End Ltd")
+	m.ID, m.Number = types.Int64Value(4), types.StringValue("KA-4")
+	m.City, m.CaseCount = types.StringNull(), types.Int64Value(0)
+
+	create := &resource.CreateResponse{State: emptyCustomerResState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: customerResPlan(t, m)}, create)
+
+	read := &resource.ReadResponse{State: customerResState(t, m)}
+	r.Read(context.Background(), resource.ReadRequest{State: customerResState(t, m)}, read)
+
+	update := &resource.UpdateResponse{State: customerResState(t, m)}
+	r.Update(context.Background(),
+		resource.UpdateRequest{Plan: customerResPlan(t, m), State: customerResState(t, m)}, update)
+
+	for name, d := range map[string]diag.Diagnostics{
+		"Create": create.Diagnostics, "Read": read.Diagnostics, "Update": update.Diagnostics,
+	} {
+		if !d.HasError() {
+			t.Errorf("%s without internal credentials must be a clear error", name)
+		}
+	}
+}
+
+func TestCustomerResource_ConfigureIgnoresNilProviderData(t *testing.T) {
+	r := &customerResource{}
+	resp := &resource.ConfigureResponse{}
+	r.Configure(context.Background(), resource.ConfigureRequest{}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Errorf("nil ProviderData is the framework's first call, not an error: %s", diagsText(resp.Diagnostics))
+	}
+	if r.clients != nil {
+		t.Error("clients should stay nil")
+	}
+}
+
+func TestCustomerResource_ConfigureAcceptsProviderClients(t *testing.T) {
+	r := &customerResource{}
+	want := &providerClients{Web: &fakeClient{}, Internal: newFakeInternal()}
+	resp := &resource.ConfigureResponse{}
+	r.Configure(context.Background(), resource.ConfigureRequest{ProviderData: want}, resp)
+	if r.clients != want {
+		t.Error("Configure did not store the provider clients")
+	}
+}
+
+// A plan or state the framework cannot decode must stop the operation, not be
+// treated as an empty model. Silently proceeding would send a blank record to
+// a full-record-replace endpoint and wipe the customer.
+func TestCustomerResource_UndecodablePlanOrStateStopsTheOperation(t *testing.T) {
+	fi := newFakeInternal()
+	fi.customers[4] = client.Customer{ID: 4, Number: "KA-4", Company: "Bag End Ltd"}
+	r := newCustomerResource(fi)
+
+	broken := tfsdk.Plan{Schema: customerResSchema(t), Raw: tftypes.Value{}}
+	brokenState := tfsdk.State{Schema: customerResSchema(t), Raw: tftypes.Value{}}
+
+	create := &resource.CreateResponse{State: emptyCustomerResState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: broken}, create)
+
+	read := &resource.ReadResponse{State: emptyCustomerResState(t)}
+	r.Read(context.Background(), resource.ReadRequest{State: brokenState}, read)
+
+	update := &resource.UpdateResponse{State: emptyCustomerResState(t)}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: broken, State: brokenState}, update)
+
+	del := &resource.DeleteResponse{State: emptyCustomerResState(t)}
+	r.Delete(context.Background(), resource.DeleteRequest{State: brokenState}, del)
+
+	for name, d := range map[string]diag.Diagnostics{
+		"Create": create.Diagnostics, "Read": read.Diagnostics,
+		"Update": update.Diagnostics, "Delete": del.Diagnostics,
+	} {
+		if !d.HasError() {
+			t.Errorf("%s accepted an undecodable plan/state", name)
+		}
+	}
+	if fi.addCustomerCalled || fi.editCustomerCalled {
+		t.Error("an undecodable plan reached an upstream write")
 	}
 }
