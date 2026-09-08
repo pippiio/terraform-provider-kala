@@ -258,5 +258,6 @@ func (p *kalaProvider) Resources(_ context.Context) []func() resource.Resource {
 		NewCustomerResource,
 		NewCaseResource,
 		NewTaskResource,
+		NewTaskAssignmentResource,
 	}
 }
