@@ -31,6 +31,18 @@ func diagsText(d diag.Diagnostics) string {
 type fakeInternal struct {
 	workers map[int64]client.Worker
 
+	cases            map[string]client.CaseDetail
+	caseIn           client.NewCase
+	fieldWrites      map[client.CaseField]string
+	archivedCalls    []bool
+	customerChanges  [][2]any
+	createCaseCalled bool
+	createCaseErr    error
+	archiveErr       error
+	setCustomerErr   error
+	caseFieldErr     error
+	getCaseErr       error
+
 	customers          map[int64]client.Customer
 	customerID         int64
 	customerIn         client.CustomerInput
@@ -115,7 +127,7 @@ func newFakeInternal(workers ...client.Worker) *fakeInternal {
 	for _, w := range workers {
 		m[w.WorkerNr] = w
 	}
-	return &fakeInternal{workers: m, customers: map[int64]client.Customer{}, customerID: 4}
+	return &fakeInternal{workers: m, customers: map[int64]client.Customer{}, customerID: 4, cases: map[string]client.CaseDetail{}}
 }
 
 func (f *fakeInternal) ListWorkers(context.Context) ([]client.Worker, error) {
@@ -284,8 +296,15 @@ func (f *fakeInternal) ListCases(context.Context, client.CaseQuery) (client.Case
 	return client.CaseScan{}, nil
 }
 
-func (f *fakeInternal) GetCase(context.Context, string) (client.CaseDetail, error) {
-	return client.CaseDetail{}, nil
+func (f *fakeInternal) GetCase(_ context.Context, caseNumber string) (client.CaseDetail, error) {
+	if f.getCaseErr != nil {
+		return client.CaseDetail{}, f.getCaseErr
+	}
+	d, ok := f.cases[caseNumber]
+	if !ok {
+		return client.CaseDetail{}, fmt.Errorf("case %s: %w", caseNumber, client.ErrNotFound)
+	}
+	return d, nil
 }
 
 func (f *fakeInternal) CreateTask(context.Context, client.TaskInput) (client.Task, error) {
@@ -296,15 +315,59 @@ func (f *fakeInternal) UpdateTask(context.Context, int64, client.TaskInput) (cli
 	return client.Task{}, nil
 }
 
-func (f *fakeInternal) CreateCase(context.Context, client.NewCase) (client.CaseDetail, error) {
-	return client.CaseDetail{}, nil
+func (f *fakeInternal) CreateCase(_ context.Context, in client.NewCase) (client.CaseDetail, error) {
+	f.createCaseCalled = true
+	f.caseIn = in
+	if f.createCaseErr != nil {
+		// Kala allocated the case before the failure, so identity comes back
+		// with the error -- the shape CreateCase really returns (FR5).
+		return client.CaseDetail{Case: client.Case{ID: 4, Number: "KA-4"}}, f.createCaseErr
+	}
+	d := client.CaseDetail{Case: client.Case{
+		ID: 4, Number: "KA-4", Name: in.Name, Address: in.Address, Zip: in.Zip,
+		InternalProject: in.InternalProject, CustomerCompany: "Bag End Ltd",
+	}}
+	f.cases["KA-4"] = d
+	return d, nil
 }
 
-func (f *fakeInternal) SetCaseArchived(context.Context, string, bool) error { return nil }
+func (f *fakeInternal) SetCaseArchived(_ context.Context, caseNumber string, archived bool) error {
+	f.archivedCalls = append(f.archivedCalls, archived)
+	if f.archiveErr != nil {
+		return f.archiveErr
+	}
+	if d, ok := f.cases[caseNumber]; ok {
+		d.Archived = archived
+		f.cases[caseNumber] = d
+	}
+	return nil
+}
 
-func (f *fakeInternal) SetCaseCustomer(context.Context, string, int64, bool) error { return nil }
+func (f *fakeInternal) SetCaseCustomer(_ context.Context, caseNumber string, customerID int64, internal bool) error {
+	f.customerChanges = append(f.customerChanges, [2]any{customerID, internal})
+	return f.setCustomerErr
+}
 
-func (f *fakeInternal) SetCaseField(context.Context, string, client.CaseField, string) error {
+func (f *fakeInternal) SetCaseField(_ context.Context, caseNumber string, field client.CaseField, value string) error {
+	if f.caseFieldErr != nil {
+		return f.caseFieldErr
+	}
+	if f.fieldWrites == nil {
+		f.fieldWrites = map[client.CaseField]string{}
+	}
+	f.fieldWrites[field] = value
+	d := f.cases[caseNumber]
+	switch field {
+	case client.CaseFieldName:
+		d.Name = value
+	case client.CaseFieldAddress:
+		d.Address = value
+	case client.CaseFieldZip:
+		d.Zip = value
+	case client.CaseFieldContactPhone:
+		d.CustomerPhone = value
+	}
+	f.cases[caseNumber] = d
 	return nil
 }
 
