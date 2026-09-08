@@ -31,6 +31,11 @@ type caseFieldMock struct {
 	// moveAddressOnNextWrite simulates someone else changing the case between
 	// this client's read and its write.
 	moveAddressOnNextWrite string
+
+	// failReadAfter makes the Nth and later case reads fail, so the
+	// verification read can break independently of the write.
+	failReadAfter int
+	reads         int
 }
 
 func newCaseFieldMock(t *testing.T) *caseFieldMock {
@@ -53,10 +58,19 @@ func newCaseFieldMock(t *testing.T) *caseFieldMock {
 		}
 
 		if strings.Contains(r.URL.Path, "GetJobDetailsAdvanced") {
+			m.reads++
+			if m.failReadAfter > 0 && m.reads >= m.failReadAfter {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			m.paths = append(m.paths, r.URL.Path)
+			m.bodies = append(m.bodies, nil)
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"caseId": 4, "caseNumber": "KA-4", "caseName": m.name,
-				"address": m.address, "zip": m.zip, "customerPhone": m.phone,
-				"isFinished": false, "internalProject": false,
+				"address": m.address, "zip": m.zip,
+				// The real key. An invented one made read-back silently fail.
+				"customersTelephone": m.phone,
+				"isFinished":         false, "internalProject": false,
 			})
 			return
 		}
@@ -266,5 +280,22 @@ func TestSetCaseField_ReadFailurePropagates(t *testing.T) {
 	m.rejectAt = "GetJobDetailsAdvanced"
 	if err := m.client().SetCaseField(context.Background(), "KA-4", CaseFieldName, "Renamed"); err == nil {
 		t.Fatal("if the case cannot be read, the previous value is unknown and the write must not proceed")
+	}
+}
+
+// The write may have landed. Without a read-back that cannot be established,
+// so the failure must say so rather than report either outcome as fact --
+// especially here, where retrying would re-run a compare-and-swap whose
+// previous value is now unknown.
+func TestSetCaseField_ReadBackFailureIsReported(t *testing.T) {
+	m := newCaseFieldMock(t)
+	m.failReadAfter = 2 // the pre-write read succeeds; the verification read does not
+
+	err := m.client().SetCaseField(context.Background(), "KA-4", CaseFieldName, "Renamed")
+	if err == nil {
+		t.Fatal("an unverifiable write must not be reported as success")
+	}
+	if !strings.Contains(err.Error(), "read back") {
+		t.Errorf("the message must say verification failed, not that the write did: %v", err)
 	}
 }
