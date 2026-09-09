@@ -22,7 +22,7 @@ var sensitiveParams = []string{
 	// "token=". It is listed in its own right.
 	"kauthtoken",
 
-	// The username is the account identifier and personal data (SEC1.5). It is
+	// The username is the account identifier and personal data. It is
 	// not a credential on its own, but it has no business in an error message
 	// or a log line either.
 	"username",

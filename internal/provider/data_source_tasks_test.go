@@ -154,7 +154,7 @@ func TestBuildTasksState_MapsAlwaysVisibleFields(t *testing.T) {
 	}
 }
 
-// FR7: assignee and authorship identify people.
+// assignee and authorship identify people.
 func TestBuildTasksState_WithholdsPeopleFieldsByDefault(t *testing.T) {
 	k := buildTasksState(sampleTasks(), false, false)[0]
 	for name, v := range map[string]interface{ IsNull() bool }{

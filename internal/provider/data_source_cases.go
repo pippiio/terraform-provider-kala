@@ -11,11 +11,11 @@
 //   2. Default to active-only when `active` is unset, mirroring kala_employees.
 //   3. Surface read coverage as `complete`, and warn when the cap was reached.
 //   4. Withhold customer contact details, and case financials, unless the
-//      matching opt-in is set (FR7). Financial data is both commercially
+//      matching opt-in is set. Financial data is both commercially
 //      sensitive and transactional.
 //   5. For kala_case, read the DETAIL endpoint: the list returns ~25 fields
 //      against 64, so a list-derived case would be missing most of what makes
-//      the singular data source worth having (risk R1, confirmed).
+//      the singular data source worth having (confirmed).
 //   6. Render dates as RFC 3339 strings; upstream sends .NET /Date(ms)/, which
 //      the client has already parsed. Null stays null.
 //
@@ -23,7 +23,7 @@
 //
 // Dependencies: client.InternalClient (ListCases, GetCase).
 // Side effects: none. CreateCase and ArchiveCase exist upstream and are not
-//               called; neither is on ARCH1.3's permitted-write list.
+//               called; neither is on the permitted-write list.
 
 package provider
 
@@ -216,7 +216,7 @@ func (d *casesDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 
 	// Client-side, over records already received. Null means "no filter"; an
 	// explicit "" means "cases with no customer" -- a real distinction that
-	// ValueString() alone would collapse (TF1.5).
+	// ValueString() alone would collapse.
 	cases := scan.Cases
 	if !config.CustomerCompany.IsNull() && !config.CustomerCompany.IsUnknown() {
 		want := strings.ToLower(config.CustomerCompany.ValueString())

@@ -9,7 +9,7 @@
 //      Upstream returns totalCount, so this is a direct comparison, not a guess.
 //   3. Withhold contact details unless include_contact_details is set. Email,
 //      phone, address, zip, city, and ean are personal and commercial data, and
-//      everything a data source exposes is written to Terraform state (FR7).
+//      everything a data source exposes is written to Terraform state.
 //   4. For kala_customer, select by id from the list. Upstream has NO by-id
 //      endpoint, so this is client-side selection, not a lookup.
 //   5. When the id is absent from an INCOMPLETE read, say the read was
@@ -209,7 +209,7 @@ func (d *customersDataSource) Read(ctx context.Context, req datasource.ReadReque
 	}
 
 	// Counts only. Customer records carry personal and commercial data and must
-	// never be bulk-logged (SEC1.5).
+	// never be bulk-logged.
 	tflog.Debug(ctx, "read Kala customers", map[string]any{
 		"count": len(scan.Customers), "total": scan.Total, "complete": scan.Complete(),
 	})

@@ -84,7 +84,7 @@ func (s *headerSpy) client() InternalClient {
 	})
 }
 
-// FR10: kacompany accompanies kauthtoken on every authed request. Already
+// kacompany accompanies kauthtoken on every authed request. Already
 // implemented in authedRequest; the new endpoints depend on it.
 func TestNewEndpoints_SendCompanyAndAuthHeaders(t *testing.T) {
 	calls := map[string]func(InternalClient) error{
@@ -121,7 +121,7 @@ func TestNewEndpoints_SendCompanyAndAuthHeaders(t *testing.T) {
 	}
 }
 
-// SEC1.3: no credential may reach an error message. The server here is
+// no credential may reach an error message. The server here is
 // hostile in a realistic way -- it echoes the request body back inside an
 // error response, and the sign-in body contains the password.
 func TestNewEndpoints_CredentialsNeverAppearInErrors(t *testing.T) {

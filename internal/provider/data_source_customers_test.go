@@ -80,7 +80,7 @@ func TestBuildCustomersState_MapsNonContactFields(t *testing.T) {
 	}
 }
 
-// FR7: contact data is personal data, and everything a data source exposes is
+// contact data is personal data, and everything a data source exposes is
 // written to state. It must be absent unless explicitly asked for.
 func TestBuildCustomersState_WithholdsContactDetailsByDefault(t *testing.T) {
 	got := buildCustomersState(sampleCustomers(), false)

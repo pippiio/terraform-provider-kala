@@ -14,15 +14,15 @@
 //   3. Decode the {customers[], totalCount} envelope into unexported wire
 //      types, then map each record onto a domain Customer. Upstream naming
 //      stops at this file: firstName, lastName, and address never appear above
-//      it (ARCH1.4).
+//      it.
 //   4. Carry BOTH identifiers as the API gives them: id is an int, number is a
 //      string. webapiv2 spells number as an int for what may or may not be the
 //      same value. Neither is parsed into the other and neither is derived,
-//      because their equality is unverified -- the same discipline ARCH1.9
+//      because their equality is unverified -- the same discipline the employee identifiers
 //      needed empirical work to relax for employees.
 //   5. Keep requesting pages until as many records are collected as totalCount
 //      promised, or the page cap is reached -- whichever comes first. The cap
-//      guarantees termination (GO1.6).
+//      guarantees termination.
 //   6. Report what the read actually covered alongside what it found. A read
 //      that stopped at the cap has not seen the account; a caller treating it
 //      as though it had would be acting on a wrong answer, not a partial one.
@@ -54,8 +54,8 @@ type Customer struct {
 	// ID and Number are BOTH carried as upstream sends them. The internal API
 	// spells Number as a string; webapiv2 spells it as an int, and the two are
 	// not known to hold the same value. Neither is derived from the other --
-	// ARCH1.9 needed an experiment to relax exactly this assumption for
-	// employees, and no such experiment has been run for customers.
+	// the equivalent assumption for employees needed an experiment to relax,
+	// and no such experiment has been run for customers.
 	ID     int64
 	Number string
 
@@ -81,7 +81,7 @@ type CustomerQuery struct {
 	PageSize int
 
 	// MaxPages caps how many pages are fetched, guaranteeing termination
-	// even if upstream never serves a short page (GO1.6).
+	// even if upstream never serves a short page.
 	MaxPages int
 }
 
@@ -105,7 +105,7 @@ type CustomerScan struct {
 func (s CustomerScan) Complete() bool { return s.Fetched >= s.Total }
 
 // wireCustomer is the internal API's customer record. Unexported: upstream
-// naming stops here (ARCH1.4, and layering_test.go fails the build otherwise).
+// naming stops here (and layering_test.go fails the build otherwise).
 //
 // Observed 2026-09-01 against the real API. Note number is a string on this
 // surface; webapiv2 sends an int for the same field name.
@@ -154,7 +154,7 @@ type wireCustomersPage struct {
 // until the account is covered or the page cap is reached.
 //
 // The cap is what makes CustomerScan.Complete meaningful: termination is
-// guaranteed (GO1.6), so a caller must be told whether termination came from
+// guaranteed, so a caller must be told whether termination came from
 // reaching the end or from hitting the bound.
 func (c *internalAPI) ListCustomers(ctx context.Context, q CustomerQuery) (CustomerScan, error) {
 	pageSize := q.PageSize

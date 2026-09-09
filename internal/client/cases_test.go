@@ -109,7 +109,7 @@ func caseRec(id int, nr, name string, isFinished bool) map[string]any {
 		"customersName": "Frodo Baggins", "customersCompany": "Bag End Ltd",
 		"customersEmail": "frodo@example.com", "customersTelephone": "+45 00 00 00 00",
 		// The list's isFinished tracks archived-ness, not completion. It must
-		// not reach the domain type at all (FR13).
+		// not reach the domain type at all.
 		"isFinished": isFinished, "internalProject": false, "restricted": false, "favorite": false,
 	}
 }
@@ -465,7 +465,7 @@ func badBodyClient(t *testing.T, path string) InternalClient {
 		MaxRetries: 1, Timeout: 5 * time.Second, retryBaseDur: time.Microsecond})
 }
 
-// FR7: financial and hour-registration data is exposed behind an opt-in at the
+// financial and hour-registration data is exposed behind an opt-in at the
 // provider layer, so the client must be able to supply it. These fields exist
 // only on the detail endpoint -- the list shape has none of them.
 func TestGetCase_DecodesFinancialFields(t *testing.T) {

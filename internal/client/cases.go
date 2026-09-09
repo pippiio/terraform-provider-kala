@@ -19,7 +19,7 @@
 //   4. Page until Fetched >= Total or the cap, reporting coverage -- as
 //      ListCustomers does, for the same reason.
 //   5. Fetch one case by number via GET /api/GetJobDetailsAdvanced/?caseNr=,
-//      which returns 64 fields against the list's ~25 (risk R1 confirmed).
+//      which returns 64 fields against the list's ~25 -- confirmed.
 //   6. An unknown caseNr returns HTTP 500, not 404. Map it to ErrNotFound only
 //      after retries are exhausted: the retry policy already covers 5xx, so a
 //      transient server error recovers on its own and only a CONSISTENT 500
@@ -32,7 +32,7 @@
 // Dependencies: internalAPI.authedRequest, ErrDecode, ErrNotFound, ErrServer.
 // Side effects: outbound HTTPS only. No mutation -- ArchiveCase and CreateCase
 //               exist and work, but neither is called from provider code and
-//               neither is on ARCH1.3's permitted-write list.
+//               neither is on the permitted-write list.
 
 package client
 
@@ -53,7 +53,7 @@ import (
 //
 // Kala calls this entity three things: "project" on webapiv2, "job" in internal
 // endpoint names, and "case" in internal response payloads and the /Case/
-// controller. One provider term, fixed here (ARCH1.4).
+// controller. One provider term, fixed here.
 type Case struct {
 	ID     int64
 	Number string
@@ -79,7 +79,7 @@ type Case struct {
 }
 
 // CaseDetail is the richer per-case read. IsFinished here is completion, unlike
-// the list field of the same name (FR13).
+// the list field of the same name.
 type CaseDetail struct {
 	Case
 
@@ -95,7 +95,7 @@ type CaseDetail struct {
 
 	// Financial and hour-registration data. Commercially sensitive and
 	// transactional; the provider exposes these only behind an explicit opt-in
-	// (FR7), but the client supplies them so that opt-in has something to show.
+	//, but the client supplies them so that opt-in has something to show.
 	Cost                 int
 	Sales                int
 	Result               int
@@ -128,7 +128,7 @@ type CaseScan struct {
 // Complete reports whether the read covered everything upstream claimed.
 func (s CaseScan) Complete() bool { return s.Fetched >= s.Total }
 
-// wireCase is the list record. Unexported (ARCH1.4, layering_test.go).
+// wireCase is the list record. Unexported (layering_test.go).
 //
 // isFinished is deliberately ABSENT: on this endpoint it tracks archived-ness,
 // not completion, and the same case reads differently here and on the detail
@@ -170,7 +170,7 @@ type wireCasesPage struct {
 
 // wireCaseDetail is the 64-field per-case read. Only the fields this track
 // exposes are decoded; financial and hour-registration fields are deliberately
-// omitted until FR7's opt-in exists.
+// omitted until the contact-details opt-in exists.
 type wireCaseDetail struct {
 	wireCase
 	CustomerID              int64  `json:"customerId"`
@@ -321,7 +321,7 @@ func (c *internalAPI) ListCases(ctx context.Context, q CaseQuery) (CaseScan, err
 //
 // WARNING: an unknown caseNr returns HTTP 500, so a consistent server error is
 // reported as ErrNotFound. That is safe for a data source, which only reads.
-// It would NOT be safe for a resource: under TF1.2 a not-found on Read means
+// It would NOT be safe for a resource: a not-found on Read means
 // RemoveResource, so a genuine outage would silently drop a live case from
 // state. Revisit this mapping before any kala_case resource is built.
 //

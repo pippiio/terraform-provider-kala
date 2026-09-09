@@ -255,7 +255,7 @@ func TestCaseRead_PopulatesDetailFields(t *testing.T) {
 	}
 }
 
-// FR7: financial data is commercially sensitive and transactional.
+// financial data is commercially sensitive and transactional.
 func TestCaseRead_WithholdsFinancialsByDefault(t *testing.T) {
 	f := &caseFake{detail: caseDetailFixture()}
 	resp := readCase(t, f, map[string]tftypes.Value{

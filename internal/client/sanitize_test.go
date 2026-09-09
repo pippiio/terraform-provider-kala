@@ -97,7 +97,7 @@ func TestSanitizeError_PreservesErrorsIsChain(t *testing.T) {
 
 // redactJSONValues exists because a real leak was found without it: the
 // sign-in body carries the password, and an upstream error echoing the request
-// put it verbatim into an error message (SEC1.3).
+// put it verbatim into an error message.
 func TestRedactSensitiveValues_JSONBodies(t *testing.T) {
 	tests := []struct {
 		name    string

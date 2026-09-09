@@ -233,7 +233,7 @@ func TestListCustomers_SearchIsPassedUpstream(t *testing.T) {
 	}
 }
 
-// FR10 regression: kacompany has always been sent by authedRequest. The new
+// Regression: kacompany has always been sent by authedRequest. The new
 // endpoint depends on it, so assert it rather than assume it.
 func TestListCustomers_SendsCompanyHeader(t *testing.T) {
 	var gotCompany, gotToken string

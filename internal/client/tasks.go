@@ -35,7 +35,7 @@
 //
 // Dependencies: internalAPI.authedRequest, parseDotNetDate, ErrDecode, ErrNotFound.
 // Side effects: outbound HTTPS only. AddChecklistItem exists and works but is
-//               not called and is not on ARCH1.3's permitted-write list.
+//               not called and is not on the permitted-write list.
 
 package client
 

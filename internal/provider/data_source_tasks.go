@@ -16,7 +16,7 @@
 //   3. Surface read coverage as `complete`, plus the case-level counters the
 //      envelope carries, which are unaffected by any filter.
 //   4. Withhold assignee and authorship behind include_contact_details, and
-//      hours and money behind include_financials (FR7).
+//      hours and money behind include_financials.
 //   5. For kala_task, prefilter by name upstream where possible, then match
 //      exactly and require a single result -- the same shape kala_customer uses.
 //
@@ -24,7 +24,7 @@
 //
 // Dependencies: client.InternalClient (ListTasks).
 // Side effects: none. AddChecklistItem exists upstream, is not called, and is
-//               not on ARCH1.3's permitted-write list.
+//               not on the permitted-write list.
 
 package provider
 
