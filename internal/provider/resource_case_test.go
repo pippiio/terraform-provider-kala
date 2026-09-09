@@ -653,3 +653,40 @@ func TestCreateCase_UnknownContactPhoneBecomesNull(t *testing.T) {
 		t.Error("an unknown value reached state; the framework treats that as a provider error")
 	}
 }
+
+// worker_number is Optional so that an IMPORTED case -- for which Kala reports
+// no creator -- does not appear to need replacing. Forcing replacement there
+// would archive the real case and create a duplicate, which is the single most
+// damaging thing this resource could do.
+func TestCaseResource_WorkerNumberDoesNotForceReplacement(t *testing.T) {
+	attr, ok := caseResSchema(t).Attributes["worker_number"]
+	if !ok {
+		t.Fatal("worker_number is missing from the schema")
+	}
+	if attr.IsRequired() {
+		t.Error("worker_number must be Optional: an imported case has no value for it")
+	}
+	if !attr.IsComputed() {
+		t.Error("worker_number must be Computed so a null in state does not read as a change")
+	}
+}
+
+// Kala still requires it to CREATE, so the omission is caught before any write
+// rather than surfacing as an upstream rejection.
+func TestCreateCase_WithoutWorkerNumberIsRejectedBeforeWriting(t *testing.T) {
+	fi := newFakeInternal()
+	r := newCaseResource(fi)
+
+	plan := plannedCase()
+	plan.WorkerNumber = types.Int64Null()
+
+	resp := &resource.CreateResponse{State: emptyCaseResState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: caseResPlan(t, plan)}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("creating without worker_number must be an error")
+	}
+	if fi.createCaseCalled {
+		t.Error("the case was created despite having no creator")
+	}
+}

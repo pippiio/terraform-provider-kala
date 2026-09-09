@@ -118,10 +118,14 @@ func (r *caseResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 					"requests upstream rather than one with a blank field.",
 			},
 			"worker_number": schema.Int64Attribute{
-				Required:      true,
-				PlanModifiers: []planmodifier.Int64{int64planmodifier.RequiresReplace()},
-				MarkdownDescription: "The employee creating the case. Required by Kala at " +
-					"creation and not changeable afterwards — no endpoint exists to move it.",
+				Optional: true, Computed: true,
+				MarkdownDescription: "The employee creating the case. **Required when creating**, " +
+					"and used only then — Kala does not return it on a read and exposes no way " +
+					"to change it afterwards.\n\n" +
+					"It is therefore Optional rather than Required, and does NOT force " +
+					"replacement: an imported case has no value for it, and forcing replacement " +
+					"there would archive the real case and create a duplicate. Setting it on an " +
+					"imported case simply records what you state.",
 			},
 			"address":       optional("Site address for this case."),
 			"zip":           optional("Site postal code for this case."),
@@ -242,6 +246,20 @@ func (r *caseResource) Create(ctx context.Context, req resource.CreateRequest, r
 	}
 	internal, ok := r.clients.requireInternal(&resp.Diagnostics)
 	if !ok {
+		return
+	}
+
+	// Optional in the schema so that import does not force replacement, but
+	// Kala requires it to create. Checked here rather than made Required,
+	// which would make an imported case unmanageable.
+	if plan.WorkerNumber.IsNull() || plan.WorkerNumber.IsUnknown() {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("worker_number"),
+			"worker_number is required to create a case",
+			"Kala records which employee created a case and will not accept one without it.\n\n"+
+				"It is Optional in the schema only so that an imported case -- for which Kala "+
+				"reports no creator -- does not appear to need replacing.",
+		)
 		return
 	}
 
