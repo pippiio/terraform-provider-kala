@@ -199,3 +199,98 @@ output "coverage_is_complete" {
 # apply — Terraform re-reads data sources both times. Narrow with
 # only_unfinished, or restrict local.cases_by_id to the cases you care about,
 # before running this against a large account.
+
+# ---------------------------------------------------------------------------
+# 5. The same traversal, MANAGED
+# ---------------------------------------------------------------------------
+#
+# Everything above reads. Below creates — and creating is the part that cannot
+# be undone, so read this section before applying it.
+#
+#   kala_customer          removes from state on destroy; the customer REMAINS
+#   kala_case              ARCHIVES on destroy; the case remains, reversibly
+#   kala_task              removes from state on destroy; the item REMAINS
+#   kala_task_assignment   detaches the employee; the job link remains
+#
+# None of these creates is an upsert. Kala allocates every id and number
+# itself, so applying this twice creates two of everything. Bring existing
+# records under management with `terraform import`, never by re-declaring them.
+
+resource "kala_customer" "acme" {
+  company = "Acme Roofing ApS"
+  cvr     = "87654321"
+  email   = "post@example.com"
+  phone   = "+45 20 00 00 10"
+  address = "Industrivej 4"
+  zip     = "2600"
+
+  description = "Managed by Terraform"
+}
+
+# A case is either customer-facing or internal. customer_number is required
+# when internal_project is false and must be omitted when it is true — checked
+# at PLAN time, because upstream they are two differently shaped requests.
+resource "kala_case" "reroof" {
+  name            = "Re-roof, Industrivej 4"
+  customer_number = kala_customer.acme.number
+  worker_number   = 1
+
+  address = "Industrivej 4"
+  zip     = "2600"
+
+  # The contact for THIS JOB. Not the customer's own phone number — changing
+  # it does not touch kala_customer.acme.
+  contact_phone = "+45 20 00 00 11"
+}
+
+# Tasks are the checklist. This resource manages what the work IS; whether it
+# is done is read-only, so a worker ticking one off produces no diff.
+resource "kala_task" "steps" {
+  for_each = {
+    strip    = { name = "Strip the old covering", photo = true }
+    membrane = { name = "Lay membrane", photo = true }
+    inspect  = { name = "Final inspection", photo = false }
+  }
+
+  case_number = kala_case.reroof.number
+  name        = each.value.name
+
+  image_required = each.value.photo
+  note_required  = true
+
+  # SECOND precision: Kala does not round-trip finer, so a sub-second value
+  # would produce a permanent diff.
+  deadline = "2026-10-31T15:00:00Z"
+}
+
+# Assignment is a job link between an employee and a CASE, scoped to a set of
+# items. The link is SHARED, so declare exactly ONE of these per (case,
+# employee) pair — two would overwrite each other on every apply.
+resource "kala_task_assignment" "roofer" {
+  case_number   = kala_case.reroof.number
+  worker_number = 101
+
+  # The COMPLETE set for this pair. An id removed here is detached next apply.
+  task_ids = [
+    kala_task.steps["strip"].id,
+    kala_task.steps["membrane"].id,
+  ]
+}
+
+resource "kala_task_assignment" "inspector" {
+  case_number   = kala_case.reroof.number
+  worker_number = 102
+
+  task_ids = [kala_task.steps["inspect"].id]
+}
+
+# The managed records read back through the same data sources as everything
+# above — which is the point: what Terraform creates and what it reads are the
+# same records, addressed the same way.
+output "managed_case" {
+  value = {
+    number   = kala_case.reroof.number
+    customer = kala_customer.acme.number
+    tasks    = [for k in kala_task.steps : k.name]
+  }
+}

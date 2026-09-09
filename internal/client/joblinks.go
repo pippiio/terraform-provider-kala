@@ -83,7 +83,7 @@ func (c *internalAPI) EnsureJobLink(ctx context.Context, caseID, workerNr int64)
 			"kala: the job link was reported created but carries no id, so the items it covers "+
 				"cannot be set (worker %d, case %d)", workerNr, caseID)
 	}
-	return JobLink{
+	return JobLink{ //nolint:staticcheck // S1016: explicit mapping is intentional at the wire/domain boundary, as in models.go and customers.go — the structs are only coincidentally identical, and a conversion would silently absorb any future divergence
 		ID: wire.ID, CaseID: wire.CaseID, CaseNumber: wire.CaseNumber,
 		WorkerNr: wire.WorkerNr, ChecklistIDs: wire.ChecklistIDs,
 	}, nil
