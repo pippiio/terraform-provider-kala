@@ -143,6 +143,10 @@ source.
 | `kala_case` | data source | One case by number, with the full detail record |
 | `kala_tasks` | data source | Tasks (checklist items) on one case |
 | `kala_task` | data source | One task by `id` or name |
+| `kala_customer` | resource | Create and update a customer |
+| `kala_case` | resource | Create, update, and archive a case |
+| `kala_task` | resource | Create and update a checklist item |
+| `kala_task_assignment` | resource | Assign an employee to a set of tasks on a case |
 
 ### Behaviour worth knowing before you apply
 
@@ -357,8 +361,39 @@ export KALA_ACC_EMPLOYEE_NUMBER=9001      # a number reserved for testing
 export KALA_ACC_EMPLOYEE_NUMBER_ALT=9002  # optional; enables the adoption test
 export KALA_ACC_EMAIL=terraform-acc@example.com
 
+# For the customer, case, task, and assignment tests: EXISTING records the
+# suite reads, changes, and puts back. It does not create them.
+export KALA_ACC_CUSTOMER_ID=4             # numeric customer id
+export KALA_ACC_CASE_NUMBER=KA-4          # a customer-facing, non-archived case
+export KALA_ACC_TASK_ID=9                 # a checklist item ON that case
+
 make testacc
 ```
+
+### The write resources are tested the opposite way round
+
+The employee suite reuses a fixed number safely because create is an **upsert**:
+run N+1 adopts whatever run N left, so a hundred runs converge on one record.
+
+**None of `kala_customer`, `kala_case`, or `kala_task` works that way.** Kala
+allocates every id and number itself, so create is not idempotent and cannot be
+— running a create test twice makes two records, and Kala can delete neither.
+
+So that part of the suite does not create by default:
+
+- **Read, update, import and destroy run every time**, against the existing
+  records named above. Each test **restores what it changed** in a final step,
+  so the tenant is left as it was found.
+- **Creation runs only under `KALA_ACC_CREATE=1`**, because each run leaves a
+  permanent record:
+
+  ```bash
+  KALA_ACC_CREATE=1 make testacc   # CREATES RECORDS THAT CANNOT BE DELETED
+  ```
+
+`KALA_ACC_CASE_NUMBER` must name a **customer-facing** case (an internal project
+has no customer to assert against) that is **not archived** (the archive test
+archives it and puts it back). `KALA_ACC_TASK_ID` must be an item on that case.
 
 **Pick the numbers deliberately, and reserve them.** `KALA_ACC_EMPLOYEE_NUMBER`
 has no default on purpose: the first run creates a real employee under whatever

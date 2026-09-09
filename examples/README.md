@@ -22,6 +22,9 @@ fan-out, and the specific ways Kala's API will hand you a confident wrong answer
 | `tasks/` | Checklist items per case, and fanning out across cases | username + password |
 | `customer-cases-tasks/` | End to end: one customer → their cases → every task on them | username + password |
 
+Registry fragments now also cover the four write resources — `kala_customer`,
+`kala_case`, `kala_task`, and `kala_task_assignment` — under `resources/`.
+
 Start with `customer-cases-tasks/` if you want the whole traversal in one place,
 or `employees/` if you only need reads and only hold an API key.
 
@@ -55,6 +58,24 @@ terraform plan
 `plan` is enough for every read-only walkthrough; only `employee/` writes
 anything. Note that Terraform re-reads data sources on both `plan` and `apply`,
 so the request counts described in each example are paid every time.
+
+## Before you apply anything that writes
+
+**Kala cannot delete a customer, a case, or a checklist item.** Nothing in this
+provider can undo a create:
+
+| Resource | What `terraform destroy` does |
+|---|---|
+| `kala_employee` | deactivates the person; record and history remain |
+| `kala_customer` | removes from state only; the customer remains |
+| `kala_case` | **archives** the case; it remains, reversibly |
+| `kala_task` | removes from state only; the item remains |
+| `kala_task_assignment` | detaches the employee from each task; the link remains |
+
+None of these creates is an upsert either — Kala allocates every id and number
+itself, so applying a configuration twice creates two records rather than
+adopting one. **Bring existing records under management with `terraform import`,
+never by re-declaring them.**
 
 ## Before you apply `employee/`
 

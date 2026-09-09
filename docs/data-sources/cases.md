@@ -80,7 +80,7 @@ Read-Only:
 - `archived` (Boolean) Whether this case is archived. Derived from which set was requested, not from a response field: the list endpoint's own `isFinished` tracks archived-ness rather than completion and disagrees with the detail endpoint.
 - `customer_company` (String) Customer company name.
 - `customer_email` (String) Customer email address. **Null unless `include_contact_details` is set** -- contact data is personal data and everything exposed here is written to Terraform state.
-- `customer_name` (String) Customer contact name, denormalised onto the case.
+- `customer_name` (String) Contact name for **this case** — the person to call about this job. Despite the attribute name this is the CASE's own contact, not a copy of the customer's record: changing it does not touch `kala_customer` (verified 2026-09-08).
 - `customer_phone` (String) Customer phone number. **Null unless `include_contact_details` is set** -- contact data is personal data and everything exposed here is written to Terraform state.
 - `economy_case_number` (String) The e-conomic case number. In practice this **mirrors `number`**, including on Kala-native internal projects that have no e-conomic counterpart.
 - `favorite` (Boolean) Whether the case is flagged as a favourite.

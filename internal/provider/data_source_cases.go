@@ -88,7 +88,7 @@ func caseAttributes() map[string]schema.Attribute {
 		"address":          schema.StringAttribute{Computed: true, MarkdownDescription: "Site address."},
 		"zip":              schema.StringAttribute{Computed: true, MarkdownDescription: "Postal code."},
 		"sub_text":         schema.StringAttribute{Computed: true, MarkdownDescription: "Secondary descriptive line."},
-		"customer_name":    schema.StringAttribute{Computed: true, MarkdownDescription: "Customer contact name, denormalised onto the case."},
+		"customer_name":    schema.StringAttribute{Computed: true, MarkdownDescription: "Contact name for **this case** — the person to call about this job. Despite the attribute name this is the CASE's own contact, not a copy of the customer's record: changing it does not touch `kala_customer` (verified 2026-09-08)."},
 		"customer_company": schema.StringAttribute{Computed: true, MarkdownDescription: "Customer company name."},
 		"internal_project": schema.BoolAttribute{Computed: true, MarkdownDescription: "Whether this is an internal project rather than customer work. Internal projects have no customer."},
 		"restricted":       schema.BoolAttribute{Computed: true, MarkdownDescription: "Whether access to the case is restricted."},

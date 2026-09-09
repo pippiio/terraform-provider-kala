@@ -102,9 +102,9 @@ is visible rather than hidden inside the provider.
 
 Assignee filtering is applied **client-side**, because Kala accepts no assignee
 parameter. It narrows the result without reducing what was read, which is why
-`complete` still describes the read. Only the responsible worker is matched; the
-`workersAssigned` collection has never been observed populated, so its shape is
-unknown and it is not exposed.
+`complete` still describes the read. Only the **responsible** worker is matched
+by that filter — a task also carries the set of workers linked to it, which is a
+different thing and is managed by `kala_task_assignment`.
 
 ### `customer_company` matches text; it is not a join
 
@@ -129,6 +129,22 @@ cases that genuinely match.
 Kala-native internal projects that have no e-conomic counterpart. Do not treat it
 as evidence of an e-conomic link.
 
+### Assignment is a job link, not a field
+
+Kala assigns work by linking a worker to a **case**, then scoping that link to a
+set of checklist items. The link is **shared**: an employee on two tasks of one
+case has one link covering both.
+
+`kala_task_assignment` therefore models the link, and there should be exactly one
+resource per (case, employee) pair. Two resources for the same pair would
+overwrite each other's membership on every apply. This is also why `kala_task`
+has no writable assignee attribute — a per-task field would hide the sharing and
+turn it into a race.
+
+There is no way to read a job link directly, so the provider reads assignment
+from the task list, and no way to remove one, so destroy detaches every task the
+link covers and warns that the link itself remains.
+
 ### Fields that are absent, not empty
 
 The case list returns 27 fields; the detail endpoint returns 69. Anything past
@@ -137,6 +153,15 @@ identity and customer name must come from `kala_case`.
 `is_finished` is exposed only from the detail endpoint, where it means
 completion. The list endpoint has a field of the same name that tracks
 *archived-ness* and disagrees with it, so it is not exposed at all.
+
+Task **deadlines are second-precision**. Kala does not round-trip finer: the
+create response echoes the millisecond value it was given, but the list read
+returns it a few milliseconds later. `kala_task` truncates on both write and
+read so the value converges; exposing a precision the API cannot preserve would
+publish a defect as a feature.
+
+A **case has no deadline**. The attribute exists on `kala_case` reads because the
+detail payload carries the field, but nothing sets it and it is not writable.
 
 `status_name` on tasks is **not translated** — the values come from the
 company-wide `kanban_options` setting and appear in whatever language it uses.
