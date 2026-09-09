@@ -210,7 +210,7 @@ func TestUpdateTask_SendsEveryFieldAndBothIdentifiers(t *testing.T) {
 	}
 }
 
-// TF1.4. Kala's list read returns a deadline a couple of milliseconds later
+// Kala's list read returns a deadline a couple of milliseconds later
 // than the one written, so millisecond precision could never converge. The
 // client truncates to the second on the way out and on the way back.
 func TestTaskDeadline_SecondPrecisionSurvivesUpstreamDrift(t *testing.T) {
@@ -319,7 +319,7 @@ func TestCreateTask_NoDeadlineSendsNull(t *testing.T) {
 }
 
 // The verification read failing is not the same as the write failing, and the
-// id must survive either way (FR5).
+// id must survive either way.
 func TestCreateTask_ReadBackFailureReturnsTheID(t *testing.T) {
 	m := newTaskWriteMock(t)
 	m.failAt = "GetChecklistItemsPaged"

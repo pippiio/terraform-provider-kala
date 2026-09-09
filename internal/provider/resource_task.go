@@ -10,7 +10,7 @@
 //      endpoint does not accept one).
 //   3. Update via UpdateTask, a FULL-RECORD REPLACE. The model carries every
 //      writable field precisely so the write cannot blank what it omits.
-//   4. Destroy writes NOTHING and warns (ADR-001). A checklist item has no
+//   4. Destroy writes NOTHING and warns. A checklist item has no
 //      archive and no deactivation; unlike a case, there is no off switch.
 //
 // What this resource deliberately does NOT manage:
@@ -174,7 +174,7 @@ const taskDeadlineLayout = "2006-01-02T15:04:05Z07:00"
 // Kala does not round-trip finer than that: the create response echoes the
 // millisecond value it was given, but the list read returns it a few
 // milliseconds later. Truncating on the way in makes the written value and the
-// read value the same, so the second plan is empty (TF1.4).
+// read value the same, so the second plan is empty.
 func parseDeadline(v types.String) (*time.Time, error) {
 	if v.IsNull() || v.IsUnknown() || v.ValueString() == "" {
 		return nil, nil
@@ -419,7 +419,7 @@ func (r *taskResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-// Delete performs NO upstream write (ADR-001).
+// Delete performs NO upstream write.
 //
 // A checklist item has neither a delete nor an archive nor a deactivation
 // flag -- it is the only entity here with no off switch whatsoever.

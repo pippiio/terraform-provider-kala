@@ -165,7 +165,7 @@ func fullInput() CustomerInput {
 	}
 }
 
-// ADR-003 constraint 4: create sends the FULL field set. Which fields the
+// Create sends the FULL field set. Which fields the
 // endpoint accepts is not trustworthy by inference -- a claim that AddCustomer
 // rejects cvr was drawn from one payload's omission and was wrong.
 func TestAddCustomer_SendsFullFieldSetToCorrectPath(t *testing.T) {
@@ -189,7 +189,7 @@ func TestAddCustomer_SendsFullFieldSetToCorrectPath(t *testing.T) {
 	}
 }
 
-// Create echoes the identity Kala allocated. This is what makes FR5 possible:
+// Create echoes the identity Kala allocated. This is what makes recovery possible:
 // state can be recorded before any follow-up call runs.
 func TestAddCustomer_ReturnsAllocatedIdentity(t *testing.T) {
 	m := newCustomerWriteMock(t)
@@ -218,7 +218,7 @@ func TestAddCustomer_InBodyErrorIsFailure(t *testing.T) {
 	}
 }
 
-// ARCH1.8: an unconfirmed write is an error, not a success.
+// an unconfirmed write is an error, not a success.
 func TestAddCustomer_UnverifiedWriteFails(t *testing.T) {
 	m := newCustomerWriteMock(t)
 	m.noReflect = true
@@ -294,7 +294,7 @@ func TestGetCustomer_PartialReadIsNotNotFound(t *testing.T) {
 	}
 }
 
-// ADR-003 constraint 4 in action. Which fields create accepts is not
+// Convergence in action. Which fields create accepts is not
 // trustworthy by inference, so a value that did not land is converged by an
 // edit rather than reported as a failure or assumed unsupported. `ean` is the
 // real open case this exists for.
@@ -323,7 +323,7 @@ func TestAddCustomer_ConvergesFieldsCreateSilentlyDropped(t *testing.T) {
 
 // Kala has no delete. A caller that loses the id of a record it just created
 // has stranded it permanently, so the id must survive a read-back failure
-// alongside the error (FR5).
+// alongside the error.
 func TestAddCustomer_ReadBackFailureStillReturnsTheAllocatedID(t *testing.T) {
 	m := newCustomerWriteMock(t)
 	m.noReflect = true
@@ -350,7 +350,7 @@ func TestAddCustomer_SuccessWithoutIDIsAnError(t *testing.T) {
 
 // The counterpart to the truncated-read case: when the read DID cover
 // everything, absence is genuine and must be ErrNotFound so callers can treat
-// it as drift (TF1.2).
+// it as drift.
 func TestGetCustomer_AbsentFromCompleteReadIsNotFound(t *testing.T) {
 	m := newCustomerWriteMock(t)
 	m.store[1] = writeRecord(1, map[string]any{"company": "Bag End Ltd"})

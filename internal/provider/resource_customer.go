@@ -5,15 +5,15 @@
 //   1. Create via AddCustomer, which allocates and returns id and number.
 //      RECORD STATE THE MOMENT THE ID IS KNOWN, before anything else can
 //      fail -- Kala has no delete, so an id dropped on the floor strands a
-//      real record permanently (FR5, AC7).
-//   2. Read by id, treating a genuine absence as drift (TF1.2) and an
+//      real record permanently.
+//   2. Read by id, treating a genuine absence as drift and an
 //      unprovable absence -- a miss inside a truncated read -- as an error.
 //   3. Update via EditCustomer, which REPLACES the whole record. The model
 //      carries every writable field, so the write cannot blank what it does
 //      not mention.
-//   4. Destroy writes NOTHING upstream and warns that the record remains
-//      (ADR-001, TF1.1). Kala offers customers no off switch -- unlike
-//      employees, which deactivate, and cases, which archive.
+//   4. Destroy writes NOTHING upstream and warns that the record remains.
+//      Kala offers customers no off switch -- unlike employees, which
+//      deactivate, and cases, which archive.
 //
 // Output: Terraform state carrying Kala's allocated identity.
 //
@@ -252,7 +252,7 @@ func (r *customerResource) Read(ctx context.Context, req resource.ReadRequest, r
 
 	got, err := internal.GetCustomer(ctx, state.ID.ValueInt64())
 	if err != nil {
-		// TF1.2: a genuine absence is drift. An UNPROVEN absence is not --
+		// a genuine absence is drift. An UNPROVEN absence is not --
 		// GetCustomer reports those separately, and treating a truncated read
 		// as deletion would drop a live customer out of state and create a
 		// duplicate on the next apply.
@@ -303,11 +303,11 @@ func (r *customerResource) Update(ctx context.Context, req resource.UpdateReques
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-// Delete performs NO upstream write (ADR-001, ARCH1.6).
+// Delete performs NO upstream write.
 //
 // Customers are the one entity here with no off switch: employees deactivate
 // via SetValidated, cases archive via ArchiveCase, and customers simply remain.
-// The warning is mandatory (TF1.1) -- without it the output is
+// The warning is mandatory -- without it the output is
 // indistinguishable from a real deletion.
 func (r *customerResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var state customerResourceModel

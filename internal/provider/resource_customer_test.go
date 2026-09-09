@@ -153,7 +153,7 @@ func TestCreateCustomer_RecordsAllocatedIdentity(t *testing.T) {
 	}
 }
 
-// AC7 / FR5. Kala has no delete: a create that fails after the record exists
+// Kala has no delete: a create that fails after the record exists
 // must still leave it in state, or the operator has an orphan they cannot find
 // and cannot remove.
 func TestCreateCustomer_FailureAfterCreationStillRecordsState(t *testing.T) {
@@ -187,7 +187,7 @@ func TestCreateCustomer_FailureAfterCreationStillRecordsState(t *testing.T) {
 	}
 }
 
-// TF1.2: a genuine absence is drift, not an error.
+// a genuine absence is drift, not an error.
 func TestReadCustomer_MissingIsDrift(t *testing.T) {
 	fi := newFakeInternal()
 	r := newCustomerResource(fi)
@@ -238,7 +238,7 @@ func TestUpdateCustomer_SendsEveryFieldSoNothingIsBlanked(t *testing.T) {
 	}
 }
 
-// ADR-001 and TF1.1: destroy writes nothing and says so. Customers have no
+// destroy writes nothing and says so. Customers have no
 // off switch at all -- not deactivation, not archival.
 func TestDeleteCustomer_WritesNothingUpstreamAndWarns(t *testing.T) {
 	fi := newFakeInternal()
@@ -256,12 +256,12 @@ func TestDeleteCustomer_WritesNothingUpstreamAndWarns(t *testing.T) {
 		t.Fatalf("destroy must not fail: %s", diagsText(resp.Diagnostics))
 	}
 	if fi.editCustomerCalled || fi.addCustomerCalled {
-		t.Error("destroy issued an upstream write; ADR-001 forbids it for customers")
+		t.Error("destroy issued an upstream write; customers have no off switch, so there is nothing to write")
 	}
 
 	warnings := resp.Diagnostics.Warnings()
 	if len(warnings) == 0 {
-		t.Fatal("TF1.1: destroy must warn that the record remains")
+		t.Fatal("destroy must warn that the record remains upstream")
 	}
 	text := strings.ToLower(warnings[0].Summary() + " " + warnings[0].Detail())
 	if !strings.Contains(text, "ka-4") && !strings.Contains(text, "bag end ltd") {
@@ -269,7 +269,7 @@ func TestDeleteCustomer_WritesNothingUpstreamAndWarns(t *testing.T) {
 	}
 }
 
-// TF1.7: import is the ONLY way to adopt an existing customer, because create
+// import is the ONLY way to adopt an existing customer, because create
 // allocates a new one rather than matching.
 func TestImportCustomer_ByNumericID(t *testing.T) {
 	r := newCustomerResource(newFakeInternal())

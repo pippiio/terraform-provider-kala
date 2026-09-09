@@ -24,7 +24,7 @@
 //
 // Dependencies: client.InternalClient (ListTasks).
 // Side effects: none. AddChecklistItem exists upstream, is not called, and is
-//               not on the permitted-write list.
+//               not on the internal API's permitted-write list.
 
 package provider
 

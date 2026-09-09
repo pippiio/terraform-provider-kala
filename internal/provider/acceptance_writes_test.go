@@ -373,7 +373,7 @@ resource "kala_case" "acc" {
 			},
 			{
 				// Unarchive. Archival being REVERSIBLE and VERIFIABLE is what
-				// let ADR-003 make destroy archive rather than only forget, so
+				// make it safe for destroy to archive rather than only forget, so
 				// this direction is load-bearing and not merely tidy-up.
 				Config: cfg(false),
 				Check: resource.ComposeAggregateTestCheckFunc(
@@ -453,7 +453,7 @@ resource "kala_task" "acc" {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("kala_task.acc", "name", renamed),
 					// is_finished is read-only; a completed task must not be
-					// reverted by an unrelated update (AC5).
+					// reverted by an unrelated update.
 					resource.TestCheckResourceAttr("kala_task.acc", "is_finished",
 						strconv.FormatBool(before.IsFinished)),
 				),

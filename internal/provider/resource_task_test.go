@@ -155,7 +155,7 @@ func TestCreateTask_ResolvesTheCaseAndRecordsIdentity(t *testing.T) {
 	}
 }
 
-// FR5: the item exists upstream and Kala cannot delete it.
+// the item exists upstream and Kala cannot delete it.
 func TestCreateTask_FailureAfterCreationStillRecordsState(t *testing.T) {
 	fi := fakeWithCase()
 	fi.createTaskErr = errContext("read-back failed")
@@ -175,7 +175,7 @@ func TestCreateTask_FailureAfterCreationStillRecordsState(t *testing.T) {
 	}
 }
 
-// AC5, and the reason is_finished is Computed. A worker ticking a task off in
+// The reason is_finished is Computed. A worker ticking a task off in
 // Kala must not produce a diff, or every apply would fight them.
 func TestReadTask_CompletedUpstreamProducesNoDiff(t *testing.T) {
 	fi := fakeWithCase()
@@ -305,7 +305,7 @@ func TestCreateTask_UnknownCaseFailsBeforeWriting(t *testing.T) {
 	}
 }
 
-// ADR-001: a checklist item has no archive and no deactivation. Destroy writes
+// A checklist item has no archive and no deactivation. Destroy writes
 // nothing and says so.
 func TestDeleteTask_WritesNothingUpstreamAndWarns(t *testing.T) {
 	fi := fakeWithCase()
@@ -319,11 +319,11 @@ func TestDeleteTask_WritesNothingUpstreamAndWarns(t *testing.T) {
 		t.Fatalf("destroy must not fail: %s", diagsText(resp.Diagnostics))
 	}
 	if fi.createTaskCalled || fi.updateTaskCalled {
-		t.Error("destroy issued an upstream write; ADR-001 forbids it for tasks")
+		t.Error("destroy issued an upstream write; a checklist item has no off switch")
 	}
 	warnings := resp.Diagnostics.Warnings()
 	if len(warnings) == 0 {
-		t.Fatal("TF1.1: destroy must warn that the item remains")
+		t.Fatal("destroy must warn that the item remains upstream")
 	}
 	text := strings.ToLower(warnings[0].Summary() + " " + warnings[0].Detail())
 	if !strings.Contains(text, "mount gutter") && !strings.Contains(text, "ka-4") {

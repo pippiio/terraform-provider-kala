@@ -70,7 +70,7 @@ type Task struct {
 
 	// AssignedWorkerNrs are the employee numbers linked to this item. Only
 	// identifiers are carried: the upstream collection also holds names,
-	// phone numbers, and titles, which are personal data (SEC1.5).
+	// phone numbers, and titles, which are personal data.
 	AssignedWorkerNrs []int64
 	AssignedToMe      bool
 	CreatedBy         string
@@ -106,7 +106,7 @@ type TaskQuery struct {
 
 	// AssignedWorkerNrs are the employee numbers linked to this item. Only
 	// identifiers are carried: the upstream collection also holds names,
-	// phone numbers, and titles, which are personal data (SEC1.5).
+	// phone numbers, and titles, which are personal data.
 	AssignedWorkerNrs []int64
 
 	PageSize int
@@ -149,7 +149,7 @@ type wireTask struct {
 
 	// WorkersAssigned is the set of workers linked to this item through their
 	// job link on the case. Observed 2026-09-08; carries personal data
-	// (name, phone, title), of which only the identifier is mapped (SEC1.5).
+	// (name, phone, title), of which only the identifier is mapped.
 	WorkersAssigned []struct {
 		WorkerNr int64 `json:"workerNr"`
 	} `json:"workersAssigned"`
@@ -335,7 +335,7 @@ func (c *internalAPI) ListTasks(ctx context.Context, q TaskQuery) (TaskScan, err
 //
 // The upstream elements also carry name, phone, and title. Those are personal
 // data and are deliberately dropped at this boundary rather than carried into
-// the domain and filtered later (SEC1.5).
+// the domain and filtered later.
 func assignedNumbers(in []struct {
 	WorkerNr int64 `json:"workerNr"`
 }) []int64 {

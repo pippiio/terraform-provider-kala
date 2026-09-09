@@ -10,7 +10,7 @@
 //   3. Truncate deadlines to SECOND precision. Kala's create response echoes
 //      the millisecond value it was given, but the list read returns it 2 ms
 //      later (characterised 2026-09-08) -- so a millisecond-precision
-//      attribute could never produce an empty second plan (TF1.4).
+//      attribute could never produce an empty second plan.
 //   4. Verify by read-back through ListTasks, absorbing the write/read name
 //      asymmetry: the field is `name` on the way out and `text` on the way
 //      back.
@@ -177,7 +177,7 @@ func (c *internalAPI) writeTask(
 	got, err := c.readTaskBack(ctx, in.CaseID, allocated.ID)
 	if err != nil {
 		// The item exists and Kala has no delete, so its id travels with the
-		// error rather than being discarded (FR5).
+		// error rather than being discarded.
 		return Task{ID: allocated.ID}, fmt.Errorf(
 			"kala: task %d was written but could not be read back: %w", allocated.ID, err)
 	}
@@ -190,7 +190,7 @@ func (c *internalAPI) writeTask(
 	// Truncate on the way back as well as on the way out. Kala's list returns
 	// the deadline a couple of milliseconds later than it was written, so
 	// returning the raw value would put drift into Terraform state and produce
-	// a non-empty second plan (TF1.4).
+	// a non-empty second plan.
 	if got.Deadline != nil {
 		t := got.Deadline.UTC().Truncate(time.Second)
 		got.Deadline = &t

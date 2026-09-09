@@ -23,7 +23,7 @@
 //
 // Dependencies: client.InternalClient (ListCases, GetCase).
 // Side effects: none. CreateCase and ArchiveCase exist upstream and are not
-//               called; neither is on the permitted-write list.
+//               called; neither is on the internal API's permitted-write list.
 
 package provider
 

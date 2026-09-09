@@ -230,7 +230,7 @@ func TestSetCaseField_NoChangeMakesNoWrite(t *testing.T) {
 	}
 }
 
-// ARCH1.8: HTTP 200 is a claim, not proof.
+// HTTP 200 is a claim, not proof.
 func TestSetCaseField_UnverifiedWriteFails(t *testing.T) {
 	m := newCaseFieldMock(t)
 	m.noReflect = true

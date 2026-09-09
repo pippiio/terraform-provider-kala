@@ -4,11 +4,11 @@
 // Process:
 //   1. Create via POST /Api/CreateCase/ -- note the CAPITAL Api, unlike every
 //      other case endpoint. Returns caseId and caseNumber, so a partial create
-//      is recoverable (FR5).
+//      is recoverable.
 //   2. Build the body by VARIANT, not by blanking: an internal project omits
 //      the customer block entirely rather than sending it empty.
 //   3. Never send newCustomer:true or updateCustomerAddress:true. Both make a
-//      write change something the operator did not declare (ADR-003).
+//      write change something the operator did not declare.
 //   4. Archive via GET /api/ArchiveCase/ -- a write performed by GET -- and
 //      verify by set membership, since `archived` is not a response field.
 //
@@ -59,7 +59,7 @@ func (c *internalAPI) CreateCase(ctx context.Context, in NewCase) (CaseDetail, e
 
 		// NEVER true. With newCustomer:true this endpoint creates a customer as
 		// a side effect of creating a case -- a record no configuration
-		// declared and that Kala cannot delete (ADR-003 constraint 0).
+		// declared and that Kala cannot delete.
 		"newCustomer": false,
 	}
 	if !in.InternalProject {
@@ -80,7 +80,7 @@ func (c *internalAPI) CreateCase(ctx context.Context, in NewCase) (CaseDetail, e
 
 	// Only the identity is taken from the create response. The full record then
 	// comes from GetCase, which both avoids duplicating that mapping and
-	// verifies the write by read-back (ARCH1.8).
+	// verifies the write by read-back.
 	var allocated struct {
 		CaseID     int64  `json:"caseId"`
 		CaseNumber string `json:"caseNumber"`
@@ -97,7 +97,7 @@ func (c *internalAPI) CreateCase(ctx context.Context, in NewCase) (CaseDetail, e
 	detail, err := c.GetCase(ctx, allocated.CaseNumber)
 	if err != nil {
 		// The case exists. Kala has no delete, so the identity travels with the
-		// error rather than being discarded (FR5) -- exactly as AddCustomer
+		// error rather than being discarded -- exactly as AddCustomer
 		// returns its id on a failed read-back.
 		return CaseDetail{Case: Case{ID: allocated.CaseID, Number: allocated.CaseNumber}},
 			fmt.Errorf("kala: case %s was created but could not be read back: %w",
@@ -123,7 +123,7 @@ func (c *internalAPI) SetCaseArchived(ctx context.Context, caseNumber string, ar
 
 	// `archived` is not a response field: it is derived from WHICH SET a case
 	// appears in, and the two sets are disjoint. Verification therefore means
-	// confirming the case moved (ARCH1.8, ADR-003).
+	// confirming the case moved.
 	scan, err := c.ListCases(ctx, CaseQuery{Archived: archived})
 	if err != nil {
 		return fmt.Errorf("kala: case %s could not be read back after archiving: %w", caseNumber, err)
@@ -160,7 +160,8 @@ func (c *internalAPI) SetCaseCustomer(
 
 		// NEVER true. It would overwrite the case address as a side effect of
 		// changing the customer -- a change the plan never mentioned, which
-		// would then surface as drift (ADR-003 constraint 0).
+		// would then surface as drift. A write must never change something the
+		// operator did not declare.
 		"updateCustomerAddress": false,
 	}
 	if internalProject {

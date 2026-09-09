@@ -5,12 +5,12 @@
 //  1. Create via POST /api/AddCustomer/, which allocates and RETURNS
 //     {"status":"Success","customerId":N}. Returning the id is what makes a
 //     partial create recoverable: the caller can record state before any
-//     follow-up call runs (FR5).
+//     follow-up call runs.
 //  2. Send the FULL configured field set on create. Which fields create
 //     accepts is not trustworthy by inference -- an earlier claim that
 //     AddCustomer rejects cvr was drawn from one captured payload's omission
-//     and was wrong (ADR-003 constraint 4).
-//  3. Verify by read-back (ARCH1.8) and, where a configured value did not
+//     and was wrong.
+//  3. Verify by read-back and, where a configured value did not
 //     persist, converge with EditCustomer.
 //  4. Update via POST /api/EditCustomer/, which is a FULL-RECORD REPLACE:
 //     every field travels on every call, so an omitted field is BLANKED.
@@ -23,7 +23,7 @@
 //
 // Dependencies: internalAPI.authedRequest, ListCustomers, ErrDecode, ErrNotFound.
 // Side effects: CREATES AND MUTATES REAL RECORDS. Kala has no delete, so every
-//               create here is permanent (ADR-003).
+//               create here is permanent.
 
 package client
 
@@ -113,7 +113,7 @@ func (in CustomerInput) matches(got Customer) bool {
 //
 // On a read-back failure the returned Customer still carries the allocated ID,
 // alongside the error. That is not defensive tidiness: Kala has no delete, so a
-// caller that discards the id has stranded a real record permanently (FR5).
+// caller that discards the id has stranded a real record permanently.
 func (c *internalAPI) AddCustomer(ctx context.Context, in CustomerInput) (Customer, error) {
 	body, err := json.Marshal(writeBodyFor(in, nil))
 	if err != nil {
@@ -142,8 +142,8 @@ func (c *internalAPI) AddCustomer(ctx context.Context, in CustomerInput) (Custom
 			"kala: customer %d was created but could not be read back: %w", resp.CustomerID, err)
 	}
 
-	// Which fields create accepts is not trustworthy by inference (ADR-003
-	// constraint 4), so anything that did not land is converged by an edit
+	// Which fields create accepts is not trustworthy by inference, so anything
+	// that did not land is converged by an edit
 	// rather than assumed unsupported or reported as a failure.
 	if !in.matches(got) {
 		return c.EditCustomer(ctx, resp.CustomerID, in)
@@ -151,7 +151,7 @@ func (c *internalAPI) AddCustomer(ctx context.Context, in CustomerInput) (Custom
 	return got, nil
 }
 
-// EditCustomer replaces a customer record and verifies the result (ARCH1.8).
+// EditCustomer replaces a customer record and verifies the result.
 //
 // FULL-RECORD REPLACE: callers must pass everything they intend the record to
 // hold, not just what changed.

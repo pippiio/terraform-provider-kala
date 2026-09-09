@@ -40,7 +40,7 @@ var sensitiveParams = []string{
 // readable by more people than the .tf file is. The operator authored the data;
 // that is not the same as consenting to broadcast it on every 500.
 //
-// This is SEC1.5 applied to the write path: log identifiers, not records.
+// The rule is: log identifiers, not records.
 // Identifiers are deliberately NOT here -- customerId, number, and caseNr must
 // survive redaction, because an error naming no record is not diagnosable.
 //

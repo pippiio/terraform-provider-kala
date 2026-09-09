@@ -128,7 +128,7 @@ func TestCreateCase_PathAndAllocatedIdentity(t *testing.T) {
 	}
 }
 
-// ADR-003 constraint 0: a write must never change what the operator did not
+// A write must never change what the operator did not
 // declare. newCustomer:true would create a customer as a side effect of
 // creating a case -- and Kala cannot delete customers.
 func TestCreateCase_NeverAsksKalaToCreateACustomer(t *testing.T) {
@@ -200,7 +200,7 @@ func TestSetCaseArchived_UsesGETWithQueryParameters(t *testing.T) {
 
 // `archived` is not a response field -- it is derived from WHICH SET the case
 // appears in. Verification therefore means confirming it moved between the two
-// disjoint lists (ADR-003, AC8).
+// disjoint lists.
 func TestSetCaseArchived_VerifiedBySetMembership(t *testing.T) {
 	m := newCaseWriteMock(t)
 	m.noArchiveReflect = true
@@ -293,7 +293,7 @@ func TestCreateCase_SuccessWithoutANumberIsAnError(t *testing.T) {
 	}
 }
 
-// FR5. The case exists upstream and Kala cannot delete it, so its identity
+// The case exists upstream and Kala cannot delete it, so its identity
 // travels with the error rather than being discarded.
 func TestCreateCase_ReadBackFailureStillReturnsTheIdentity(t *testing.T) {
 	m := newCaseWriteMock(t)

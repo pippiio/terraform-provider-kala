@@ -132,7 +132,7 @@ func TestIntegration_Deactivate(t *testing.T) {
 // It does NOT make writes reversible: Kala still has no delete anywhere.
 //
 // Logs the company id and name ONLY. secureLoginToken is a live credential
-// (SEC1.1/SEC1.3) and is never printed, not even truncated.
+// and is never printed, not even truncated.
 func TestIntegration_WhichCompany(t *testing.T) {
 	if os.Getenv("KALA_PROBE") != "1" {
 		t.Skip("set KALA_PROBE=1")

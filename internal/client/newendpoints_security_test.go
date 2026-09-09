@@ -224,7 +224,7 @@ func piiInput() CustomerInput {
 	}
 }
 
-// FR10 for the write path: kacompany accompanies kauthtoken here too. The call
+// The write path too: kacompany accompanies kauthtoken here too. The call
 // is expected to fail (the spy serves no matching record to read back); the
 // headers are recorded on the request regardless, which is what is asserted.
 func TestCustomerWrites_SendCompanyAndAuthHeaders(t *testing.T) {
@@ -242,7 +242,8 @@ func TestCustomerWrites_SendCompanyAndAuthHeaders(t *testing.T) {
 	}
 }
 
-// SEC1.3 on the write path. The sign-in body carrying the password is reached
+// Credential redaction on the write path. The sign-in body carrying the
+// password is reached
 // through these calls exactly as it is through the reads.
 func TestCustomerWrites_CredentialsNeverAppearInErrors(t *testing.T) {
 	for _, status := range []int{http.StatusInternalServerError, http.StatusBadRequest} {
@@ -272,7 +273,7 @@ func TestCustomerWrites_CredentialsNeverAppearInErrors(t *testing.T) {
 	}
 }
 
-// SEC1.5 applied to the write path: log identifiers, not records.
+// The rule applied to the write path: log identifiers, not records.
 //
 // A failing write whose body is echoed back would otherwise put a customer's
 // email, phone, and address into a Terraform diagnostic -- and from there into

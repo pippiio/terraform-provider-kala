@@ -144,7 +144,7 @@ type InternalClient interface {
 	ListCustomers(ctx context.Context, q CustomerQuery) (CustomerScan, error)
 
 	// AddCustomer creates a customer and returns it with the identity Kala
-	// allocated. Verified by read-back (ARCH1.8).
+	// allocated. Verified by read-back.
 	AddCustomer(ctx context.Context, in CustomerInput) (Customer, error)
 
 	// EditCustomer replaces a customer record. FULL-RECORD REPLACE: an omitted
@@ -170,7 +170,7 @@ type InternalClient interface {
 	SetCaseField(ctx context.Context, caseNumber string, field CaseField, value string) error
 
 	// CreateCase creates a case and returns it with the identity Kala
-	// allocated. Always sends newCustomer:false (ADR-003).
+	// allocated. Always sends newCustomer:false -- see CreateCase.
 	CreateCase(ctx context.Context, in NewCase) (CaseDetail, error)
 
 	// SetCaseArchived archives or unarchives a case, verified by set
@@ -182,7 +182,7 @@ type InternalClient interface {
 	SetCaseCustomer(ctx context.Context, caseNumber string, customerID int64, internalProject bool) error
 
 	// CreateTask creates a checklist item and returns it with the id Kala
-	// allocated. Verified by read-back (ARCH1.8).
+	// allocated. Verified by read-back.
 	CreateTask(ctx context.Context, in TaskInput) (Task, error)
 
 	// UpdateTask replaces a checklist item. FULL-RECORD REPLACE: an omitted

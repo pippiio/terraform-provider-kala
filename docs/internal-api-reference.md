@@ -32,7 +32,7 @@ and 200 on GET.
 A resource whose attributes cannot change in place must declare them all
 `RequiresReplace`, turning every edit into destroy-then-create. Kala cannot
 delete, so every edit would strand the old record and duplicate it. That is why
-the internal API carries the write path (ADR-003).
+the internal API carries the write path.
 
 ## Two write models
 

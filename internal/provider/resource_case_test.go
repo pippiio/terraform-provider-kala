@@ -200,7 +200,7 @@ func TestCreateCase_RecordsAllocatedIdentity(t *testing.T) {
 	}
 }
 
-// FR5: the case exists upstream and cannot be deleted, so a failure after
+// the case exists upstream and cannot be deleted, so a failure after
 // creation must still leave it in state.
 func TestCreateCase_FailureAfterCreationStillRecordsState(t *testing.T) {
 	fi := newFakeInternal()
@@ -273,7 +273,7 @@ func TestUpdateCase_CustomerChangeGoesThroughSetCaseCustomer(t *testing.T) {
 	}
 }
 
-// ADR-003 supersedes ADR-001 for cases: destroy ARCHIVES, verifiably, and
+// Cases are the exception to destroy-writes-nothing: destroy ARCHIVES, verifiably, and
 // warns that the case remains.
 func TestDeleteCase_ArchivesAndWarns(t *testing.T) {
 	fi := newFakeInternal()
@@ -292,7 +292,7 @@ func TestDeleteCase_ArchivesAndWarns(t *testing.T) {
 	}
 	warnings := resp.Diagnostics.Warnings()
 	if len(warnings) == 0 {
-		t.Fatal("TF1.1: destroy must warn that the case remains")
+		t.Fatal("destroy must warn that the case remains upstream")
 	}
 	text := strings.ToLower(warnings[0].Summary() + " " + warnings[0].Detail())
 	if !strings.Contains(text, "ka-4") {
@@ -301,7 +301,7 @@ func TestDeleteCase_ArchivesAndWarns(t *testing.T) {
 }
 
 // A failed archive is an ERROR, not a warning. Reporting a teardown that did
-// not happen is the worst outcome -- the same rule ADR-002 set for employees.
+// not happen is the worst outcome -- the same rule employee deactivation follows.
 func TestDeleteCase_FailedArchiveIsAnError(t *testing.T) {
 	fi := newFakeInternal()
 	fi.archiveErr = errContext("kala refused")

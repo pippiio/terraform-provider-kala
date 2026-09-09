@@ -4,14 +4,15 @@
 // Process:
 //   1. Create via CreateCase, which allocates and returns caseId and
 //      caseNumber. Record state as soon as they are known -- Kala has no
-//      delete (FR5).
+//      delete.
 //   2. Update FIELD BY FIELD. Cases follow the employee model, not the
 //      customer one: each attribute has its own endpoint, each carries the
 //      value it expects to replace, and Kala validates it. Omission is
 //      therefore safe, and only changed attributes are written.
-//   3. Destroy ARCHIVES (ADR-003, superseding ADR-001 for cases only) and
+//   3. Destroy ARCHIVES -- the one resource here where destroy writes -- and
 //      warns that the case remains. Archival is reversible and verifiable by
-//      set membership, which is what let it meet ADR-002's standard.
+//      set membership, which is what makes it safe to do at all: a write that
+//      could not be confirmed would report a teardown that may not have happened.
 //   4. customer_number is required exactly when internal_project is false.
 //      The two create bodies are different shapes upstream, so the constraint
 //      is enforced at PLAN time rather than discovered at apply.
@@ -273,7 +274,7 @@ func (r *caseResource) Create(ctx context.Context, req resource.CreateRequest, r
 	})
 	if err != nil {
 		// The case exists upstream and Kala has no delete, so its identity is
-		// recorded before the failure is surfaced (FR5). Without this the next
+		// recorded before the failure is surfaced. Without this the next
 		// apply creates a SECOND case rather than converging this one.
 		if created.Number != "" {
 			r.recordPartialCase(ctx, plan, created, resp)
@@ -440,7 +441,9 @@ func conflictHint(detail string, err error) string {
 		"Run `terraform refresh` (or plan again) and re-apply; the change was NOT made."
 }
 
-// Delete ARCHIVES the case (ADR-003, superseding ADR-001 for cases only).
+// Delete ARCHIVES the case. Every other resource here writes nothing on
+// destroy; a case is the exception because archival is both reversible and
+// verifiable.
 //
 // A failed archive is an error, not a warning: reporting a teardown that did
 // not happen is the worst available outcome.

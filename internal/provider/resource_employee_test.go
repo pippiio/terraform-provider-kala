@@ -270,7 +270,7 @@ func (f *fakeInternal) AddCustomer(_ context.Context, in client.CustomerInput) (
 	f.customerIn = in
 	if f.addCustomerErr != nil {
 		// Kala allocated the record before the failure, so the id comes back
-		// with the error -- the shape AddCustomer really returns (FR5).
+		// with the error -- the shape AddCustomer really returns.
 		return client.Customer{ID: f.customerID}, f.addCustomerErr
 	}
 	c := customerFrom(f.customerID, in)
@@ -432,7 +432,7 @@ func (f *fakeInternal) CreateCase(_ context.Context, in client.NewCase) (client.
 	f.caseIn = in
 	if f.createCaseErr != nil {
 		// Kala allocated the case before the failure, so identity comes back
-		// with the error -- the shape CreateCase really returns (FR5).
+		// with the error -- the shape CreateCase really returns.
 		return client.CaseDetail{Case: client.Case{ID: 4, Number: "KA-4"}}, f.createCaseErr
 	}
 	d := client.CaseDetail{Case: client.Case{

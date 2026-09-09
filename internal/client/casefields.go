@@ -10,7 +10,7 @@
 //      request that can only fail.
 //   3. Write, using this endpoint's own path, identifier key, and previous-key
 //      spelling. There is no rule here, only a table.
-//   4. Verify by reading the case back (ARCH1.8). HTTP 200 is a claim.
+//   4. Verify by reading the case back. HTTP 200 is a claim.
 //
 // Output: nothing on success; ErrConflict when the record changed underneath.
 //
