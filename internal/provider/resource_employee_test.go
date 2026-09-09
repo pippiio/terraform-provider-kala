@@ -601,7 +601,7 @@ func TestReadEmployee_RefreshesActivationAndComputedFields(t *testing.T) {
 	}
 }
 
-// ARCH1.5: WorkerInfo is a read-enrichment path, so a failure must degrade
+// WorkerInfo is a read-enrichment path, so a failure must degrade
 // rather than fail — and must NOT null the prior values, which would
 // manufacture an unresolvable diff on every plan.
 func TestReadEmployee_EnrichmentFailureKeepsPriorValues(t *testing.T) {
@@ -757,7 +757,7 @@ func TestDeleteEmployee_DeactivatesAndWarns(t *testing.T) {
 	}
 }
 
-// ARCH1.5 excludes this path from graceful degradation: a failed deactivation
+// Graceful degradation does NOT extend to deactivation: a failed one
 // must fail the apply rather than report a cleanup that did not happen.
 func TestDeleteEmployee_FailureIsAnErrorNotAWarning(t *testing.T) {
 	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "X", IsValidated: true})

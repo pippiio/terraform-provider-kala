@@ -367,7 +367,7 @@ func (r *employeeResource) Read(ctx context.Context, req resource.ReadRequest, r
 	if err != nil {
 		if errors.Is(err, client.ErrNotFound) {
 			// Kala cannot delete employees, so this is unusual — but if the
-			// record is genuinely gone, it is drift, not a failure (TF1.2).
+			// record is genuinely gone, it is drift, not a failure.
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -419,10 +419,10 @@ func (r *employeeResource) Update(ctx context.Context, req resource.UpdateReques
 
 // Delete deactivates the employee.
 //
-// This is the one resource whose Delete writes upstream. ARCH1.5 explicitly
-// excludes this path from graceful degradation: a failed deactivation must fail
-// the apply, because silently "succeeding" would leave a departed employee
-// active while reporting otherwise.
+// This is the one resource whose Delete writes upstream, and the one write
+// that is NOT allowed to degrade gracefully. A failed deactivation must fail
+// the apply: silently "succeeding" would leave a departed employee active
+// while reporting otherwise.
 func (r *employeeResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var state employeeResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
@@ -639,7 +639,7 @@ func optionalComputedBool(description string) schema.BoolAttribute {
 
 // enrich fills the WorkerInfo-sourced attributes.
 //
-// Best-effort per ARCH1.5: WorkerInfo is a read-enrichment path, so a failure
+// Best effort: WorkerInfo is a read-enrichment path, so a failure
 // degrades rather than failing the operation. Prior values are LEFT IN PLACE
 // rather than nulled — nulling them would manufacture a diff on every plan the
 // user could not resolve.

@@ -141,7 +141,7 @@ func (d *employeesDataSource) Read(ctx context.Context, req datasource.ReadReque
 	}
 
 	// Log the count only. Employee records are personal data and must never be
-	// bulk-logged (guardrail SEC1.5) — the reference prototype printed the raw
+	// bulk-logged — the reference prototype printed the raw
 	// response to stdout, which is exactly what this avoids.
 	tflog.Debug(ctx, "read Kala employees", map[string]any{"count": len(employees)})
 

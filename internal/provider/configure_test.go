@@ -14,7 +14,7 @@ import (
 
 // These drive the provider through the real plugin protocol, so Configure and
 // Read execute exactly as Terraform would run them — but against an httptest
-// server, so the suite still makes no external network calls (NFR3).
+// server, so the suite still makes no external network calls.
 
 func providerConfigType() tftypes.Object {
 	return tftypes.Object{
@@ -125,7 +125,7 @@ func TestConfigure_SucceedsWithValidCredentials(t *testing.T) {
 	}
 }
 
-// FR5: a 401 during configuration must be an actionable, attribute-scoped error.
+// a 401 during configuration must be an actionable, attribute-scoped error.
 func TestConfigure_401ProducesActionableDiagnostic(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -147,7 +147,7 @@ func TestConfigure_401ProducesActionableDiagnostic(t *testing.T) {
 	}
 }
 
-// SEC1.1/SEC1.3: the credential must never appear in a diagnostic, even though
+// the credential must never appear in a diagnostic, even though
 // it travels in the query string.
 func TestConfigure_DiagnosticsNeverContainTheAPIKey(t *testing.T) {
 	const key = "top-secret-credential"

@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// Fills the remaining NFR2 gaps: the public constructor, the sanitizedError
+// Fills the remaining coverage gaps: the public constructor, the sanitizedError
 // unwrap chain, boundary cases in redaction, and the transport paths that the
 // happy-path tests do not reach.
 

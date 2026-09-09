@@ -9,8 +9,8 @@ import (
 // The webapiv2 documentation lists Employee's field NAMES but specifies no
 // types and gives no example payload. These tests pin the decoding assumptions
 // so that Phase 4's smoke test against the real API has something concrete to
-// contradict (risk R1), and so an upstream field rename fails loudly rather
-// than zero-filling silently (risk R8).
+// contradict, and so an upstream field rename fails loudly rather
+// than zero-filling silently.
 
 func TestDecodeEmployee_FullPayload(t *testing.T) {
 	body := `{
@@ -85,7 +85,7 @@ func TestDecodeEmployee_SettingsAbsentNullOrEmpty(t *testing.T) {
 }
 
 // number is the record's identity. An employee without one is never valid, so
-// its absence must fail loudly rather than decode to zero (risk R8: Go's
+// its absence must fail loudly rather than decode to zero (Go's
 // encoding/json zero-fills missing fields, so a rename degrades silently).
 func TestDecodeEmployee_MissingOrZeroNumberIsAnError(t *testing.T) {
 	tests := []struct {

@@ -18,9 +18,9 @@ import (
 // undocumented and unversioned, and it is the ONLY place employee activation
 // lives.
 //
-// Guardrail ARCH1.3 enumerates every write permitted here; see that list before
-// adding another. Every write must be verified by a read-back (ARCH1.8). Nomenclature differs from webapiv2:
-// this API says "worker" and keys on workerNr (ARCH1.4 keeps that vocabulary
+// enumerates every write permitted here; see that list before
+// adding another. Every write must be verified by a read-back. Nomenclature differs from webapiv2:
+// this API says "worker" and keys on workerNr (that vocabulary is kept
 // confined to this file).
 
 const (
@@ -72,7 +72,7 @@ func (c InternalConfig) withDefaults() InternalConfig {
 // Worker is the internal API's representation of a person.
 //
 // Deliberately distinct from Employee: the two APIs disagree on identifier and
-// on which fields exist, and ARCH1.9 forbids translating between workerNr and
+// on which fields exist, and nothing may translate between workerNr and
 // employeeNumber until the mapping is confirmed against a live tenant.
 type Worker struct {
 	WorkerNr    int64
@@ -95,7 +95,7 @@ type InternalClient interface {
 	GetWorker(ctx context.Context, workerNr int64) (Worker, error)
 
 	// SetWorkerValidated sets a worker's activation state and VERIFIES the
-	// result by reading it back (ARCH1.8). An unconfirmed write is an error.
+	// result by reading it back. An unconfirmed write is an error.
 	SetWorkerValidated(ctx context.Context, workerNr int64, validated bool) error
 
 	// GetWorkerInfo returns the detailed record for a worker.
@@ -107,7 +107,7 @@ type InternalClient interface {
 	GetWorkerInfo(ctx context.Context, workerNr int64) (WorkerInfo, error)
 
 	// SetWorkerEmail changes a worker's email via /api/SetEmailNew/ and verifies
-	// the result by reading it back (ARCH1.8).
+	// the result by reading it back.
 	SetWorkerEmail(ctx context.Context, workerNr int64, email string) error
 
 	// SetWorkerField sets one string-valued field (phone, title, initials,
@@ -124,14 +124,14 @@ type InternalClient interface {
 	SetWorkerDateOfEmployment(ctx context.Context, workerNr int64, date string) error
 
 	// SetWorkerBoss sets which employee an employee reports to — Kala's "first
-	// boss" — and verifies the result by reading it back (ARCH1.8).
+	// boss" — and verifies the result by reading it back.
 	SetWorkerBoss(ctx context.Context, workerNr, bossNr int64) error
 
 	// SendWelcomeEmail sends Kala's onboarding email to an address.
 	//
 	// Unlike every other write here, this has no persistent effect to read
 	// back — the only confirmation available is the endpoint's own status
-	// field, so ARCH1.8's read-back rule cannot apply.
+	// field, so the read-back rule cannot apply.
 	SendWelcomeEmail(ctx context.Context, email string) error
 
 	// CreateWorker registers a new employee via /Api/SignUp/.
@@ -190,7 +190,7 @@ type NewWorker struct {
 	Name   string
 }
 
-// --- wire types (unexported; ARCH1.4) ------------------------------------
+// --- wire types (unexported: upstream naming stops here) ------------------
 
 type wireSignInRequest struct {
 	Username     string `json:"username"`
@@ -324,7 +324,7 @@ type wireSetValidatedRequest struct {
 //
 // medarbejderNr is Danish for "employee number". Whether it is the same value
 // as workerNr (returned by /api/Workers) and as webapiv2's employeeNumber is
-// UNVERIFIED — see ARCH1.9. Creating an employee with a known medarbejderNr and
+// UNVERIFIED. Creating an employee with a known medarbejderNr and
 // observing which workerNr appears is the experiment that would settle it.
 type wireSetEmailRequest struct {
 	WorkerNr int64  `json:"workerNr"`
@@ -612,7 +612,7 @@ func (c *internalAPI) requestWithContentType(
 			reader = bytes.NewReader(nil)
 		}
 
-		req, err := http.NewRequestWithContext(ctx, method, target, reader) // GO1.5
+		req, err := http.NewRequestWithContext(ctx, method, target, reader) // context, so cancellation propagates
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrTransport, sanitizeError(err))
 		}
@@ -650,7 +650,7 @@ func (c *internalAPI) attempt(req *http.Request) ([]byte, error) {
 		}
 		return nil, fmt.Errorf("%w: %v", ErrTransport, sanitizeError(err))
 	}
-	defer func() { _ = resp.Body.Close() }() // GO1.1
+	defer func() { _ = resp.Body.Close() }()
 
 	return readBody(resp)
 }
@@ -701,11 +701,14 @@ func (c *internalAPI) GetWorker(ctx context.Context, workerNr int64) (Worker, er
 
 // SetWorkerValidated sets activation state and confirms it by reading back.
 //
-// This is the ONLY write permitted against the internal API (ARCH1.3). HTTP 200
-// is not proof: the old data "http" approach asserted only status_code == 200,
-// and offboarding is precisely where a silent no-op is most damaging. ARCH1.5
-// explicitly excludes this path from graceful degradation — a failure here must
-// fail the apply.
+// HTTP 200 is not proof: the old data "http" approach asserted only
+// status_code == 200, and offboarding is precisely where a silent no-op is most
+// damaging.
+//
+// Read failures elsewhere in this client degrade gracefully -- an enrichment
+// field becomes null and the operation still succeeds. This path is excluded
+// from that: a deactivation that cannot be confirmed must FAIL the apply, not
+// report a departed employee as offboarded when they may still be active.
 func (c *internalAPI) SetWorkerValidated(ctx context.Context, workerNr int64, validated bool) error {
 	body, err := json.Marshal(wireSetValidatedRequest{WorkerNr: workerNr, IsValidated: validated})
 	if err != nil {
@@ -716,7 +719,7 @@ func (c *internalAPI) SetWorkerValidated(ctx context.Context, workerNr int64, va
 		return fmt.Errorf("kala: SetValidated for worker %d: %w", workerNr, err)
 	}
 
-	// Read-back verification (ARCH1.8).
+	// Read-back verification.
 	worker, err := c.GetWorker(ctx, workerNr)
 	if err != nil {
 		return fmt.Errorf("kala: could not verify SetValidated for worker %d: %w", workerNr, err)
@@ -759,7 +762,7 @@ func (c *internalAPI) CreateWorker(ctx context.Context, in NewWorker) (Worker, e
 		return Worker{}, fmt.Errorf("kala: creating employee %d: %w", in.Number, err)
 	}
 
-	// Read-back verification (ARCH1.8): confirm the employee now exists under
+	// Read-back verification: confirm the employee now exists under
 	// the number we supplied. This is also the check that would reveal any
 	// mismatch between medarbejderNr and workerNr.
 	worker, err := c.GetWorker(ctx, in.Number)
@@ -797,7 +800,7 @@ func (c *internalAPI) GetWorkerInfo(ctx context.Context, workerNr int64) (Worker
 
 // SetWorkerEmail changes a worker's email address.
 //
-// Verified by read-back like every internal-API write (ARCH1.8): the endpoint
+// Verified by read-back like every internal-API write: the endpoint
 // returning 200 is its claim, not proof. WorkerInfo is the confirmation, and it
 // is also the only place email is readable at all.
 func (c *internalAPI) SetWorkerEmail(ctx context.Context, workerNr int64, email string) error {

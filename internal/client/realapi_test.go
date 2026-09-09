@@ -14,7 +14,7 @@ import (
 
 // OBSERVED: requesting a nonexistent employeeNumber returns HTTP 200 with
 // content-length: 0 — not 404. Decoding an empty body yields ErrDecode, so
-// Read would error instead of detecting drift (guardrail TF1.2).
+// Read would error instead of detecting drift.
 func TestGetEmployee_Empty200BodyMeansNotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

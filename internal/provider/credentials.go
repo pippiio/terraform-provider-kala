@@ -8,7 +8,7 @@ import (
 // envVarForAttribute maps a provider attribute to the environment variable that
 // can supply it.
 //
-// Environment fallback is mandatory (guardrail SEC1.4): making credentials
+// Environment fallback is mandatory: making credentials
 // Required in the schema forces them into .tf or .tfvars files, both of which
 // tend to reach version control. The reference prototype made exactly this
 // mistake.

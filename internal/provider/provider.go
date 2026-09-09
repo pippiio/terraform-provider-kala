@@ -1,6 +1,6 @@
 // Package provider implements the Terraform provider surface for Kala.
 //
-// Layering (guardrails ARCH1.1/ARCH1.2): this package owns everything
+// Layering: this package owns everything
 // Terraform-facing — schemas, diagnostics, state mapping. It never constructs
 // HTTP requests directly; all upstream access goes through internal/client.
 package provider
@@ -62,7 +62,7 @@ func (p *kalaProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp 
 			},
 			"api_key": schema.StringAttribute{
 				Optional:  true,
-				Sensitive: true, // SEC1.2 — keeps the credential out of plan output
+				Sensitive: true, // keeps the credential out of plan output
 				MarkdownDescription: "API key for the Kala webapiv2 API. May also be set via the `KALA_API_KEY` " +
 					"environment variable, which is preferred so the credential stays out of version control.",
 			},
@@ -91,7 +91,7 @@ func (p *kalaProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp 
 			},
 			"password": schema.StringAttribute{
 				Optional:  true,
-				Sensitive: true, // SEC1.2
+				Sensitive: true,
 				MarkdownDescription: "Password for Kala's internal app API. May also be set via " +
 					"`KALA_PASSWORD`, which is preferred so the credential stays out of version control.",
 			},

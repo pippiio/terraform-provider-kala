@@ -8,7 +8,7 @@ import (
 
 // The Kala API takes credentials as *query parameters*, so any code path that
 // reports a request URL — a wrapped error, a log line — leaks the key unless it
-// is redacted first. These tests pin guardrail SEC1.3 and risk R2.
+// is redacted first. These tests pin that.
 
 const secret = "super-secret-key-value"
 

@@ -6,7 +6,7 @@ import (
 )
 
 // The API documents exactly one status code (401). Everything else is
-// classified by status class, never by parsing an unknown error body (risk R6).
+// classified by status class, never by parsing an unknown error body.
 
 func TestClassifyStatus_MapsToSentinels(t *testing.T) {
 	tests := []struct {
@@ -64,7 +64,7 @@ func TestIsRetryable(t *testing.T) {
 		want bool
 	}{
 		// Retrying a 4xx cannot help — the request itself is wrong — and only
-		// amplifies load against an API whose rate limits are undocumented (R3).
+		// amplifies load against an API whose rate limits are undocumented.
 		{"401 not retryable", classifyStatus(401, ""), false},
 		{"404 not retryable", classifyStatus(404, ""), false},
 		{"400 not retryable", classifyStatus(400, ""), false},

@@ -1,6 +1,6 @@
 // Package client talks to Kala. It is deliberately ignorant of Terraform:
 // nothing here imports terraform-plugin-framework, and no type in this package
-// knows what a diagnostic or a types.String is (guardrail ARCH1.1).
+// knows what a diagnostic or a types.String is.
 //
 // The interface below is expressed in DOMAIN terms, not endpoint names. That is
 // the whole point of it. Kala exposes two disjoint APIs — the documented
@@ -65,10 +65,10 @@ type ListOptions struct {
 
 	// PageSize is the number of records per request. Zero means the client
 	// default, which is deliberately far below the API's documented default of
-	// 5000 to bound response size (risk R4).
+	// 5000 to bound response size.
 	PageSize int
 
 	// MaxPages caps how many pages will be fetched, guaranteeing termination
-	// even if the API never returns a short page (guardrail GO1.6).
+	// even if the API never returns a short page.
 	MaxPages int
 }

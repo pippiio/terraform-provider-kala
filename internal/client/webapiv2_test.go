@@ -12,7 +12,7 @@ import (
 )
 
 // Every test here runs against an httptest server: unit tests make no real
-// network calls (NFR3). Retry delays are set to microseconds so the suite stays
+// network calls. Retry delays are set to microseconds so the suite stays
 // fast without disabling the backoff path.
 
 func testConfig(endpoint string) Config {
@@ -59,7 +59,7 @@ func TestPing_401IsUnauthorized(t *testing.T) {
 }
 
 // A rejected request cannot succeed on retry, and retrying amplifies load
-// against an API with undocumented rate limits (risk R3).
+// against an API with undocumented rate limits.
 func TestRetry_4xxIsNotRetried(t *testing.T) {
 	var calls int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -135,7 +135,7 @@ func TestRetry_5xxThenSuccess(t *testing.T) {
 	}
 }
 
-// Cancellation must abort in flight, not run to completion (guardrail GO1.5).
+// Cancellation must abort in flight, not run to completion.
 func TestContext_CancellationAbortsRetries(t *testing.T) {
 	var calls int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -203,7 +203,7 @@ func TestTransportError_IsRetriedAndClassified(t *testing.T) {
 	}
 }
 
-// The credential must never survive into an error message (SEC1.3, risk R2).
+// The credential must never survive into an error message.
 func TestErrors_NeverContainTheAPIKey(t *testing.T) {
 	const key = "extremely-secret-key"
 
@@ -253,7 +253,7 @@ func TestGetEmployee_SuccessAndNotFound(t *testing.T) {
 	}
 }
 
-// A non-2xx body must never be decoded — its shape is undocumented (risk R6).
+// A non-2xx body must never be decoded — its shape is undocumented.
 func TestNonSuccessBodyIsNotDecoded(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)

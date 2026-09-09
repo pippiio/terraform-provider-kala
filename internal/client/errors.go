@@ -6,7 +6,7 @@ import "errors"
 //
 // The Kala documentation specifies exactly one status code — 401 for an invalid
 // key — and nothing else. Classification is therefore by status *class*, never
-// by parsing a response body whose shape is unknown (risk R6).
+// by parsing a response body whose shape is unknown.
 var (
 	// ErrUnauthorized indicates the credentials were rejected (HTTP 401).
 	ErrUnauthorized = errors.New("kala: unauthorized — the API key was rejected")
@@ -25,7 +25,7 @@ var (
 
 	// ErrDecode indicates a 2xx response whose body could not be decoded into
 	// the expected shape. Because the API documents no field types, this is a
-	// realistic signal that upstream changed (risk R8).
+	// realistic signal that upstream changed.
 	ErrDecode = errors.New("kala: could not decode response")
 )
 
@@ -70,7 +70,7 @@ func classifyStatus(status int, detail string) error {
 //
 // Only server-side and transport failures are retried. A 4xx is never retried:
 // the request itself is wrong, so repeating it cannot help and only amplifies
-// load against an API whose rate limits are undocumented (risk R3).
+// load against an API whose rate limits are undocumented.
 func isRetryable(err error) bool {
 	return errors.Is(err, ErrServer) || errors.Is(err, ErrTransport)
 }

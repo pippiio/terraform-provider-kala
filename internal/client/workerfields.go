@@ -41,7 +41,7 @@ type workerFieldSpec struct {
 	valueKey string
 
 	// readBack returns the field's current value from a WorkerInfo record, so
-	// the write can be verified (ARCH1.8).
+	// the write can be verified.
 	readBack func(WorkerInfo) string
 }
 
@@ -227,7 +227,7 @@ func isISODate(s string) bool {
 
 // postJSON sends an authenticated JSON POST to the internal API.
 // SetWorkerBoss sets which employee an employee reports to, and VERIFIES the
-// result by reading it back (ARCH1.8).
+// result by reading it back.
 //
 // Kala calls this the "first boss". It is the one worker field that is neither
 // a string nor a role flag, which is why it is not in the table above:

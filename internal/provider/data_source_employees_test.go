@@ -12,7 +12,7 @@ import (
 )
 
 // fakeClient is a hand-written double. It records calls so tests can assert
-// that no network work happens when it must not (FR5).
+// that no network work happens when it must not.
 type fakeClient struct {
 	pingCalled  bool
 	pingErr     error
@@ -56,7 +56,7 @@ func TestEmployeesDataSource_Metadata(t *testing.T) {
 	}
 }
 
-// FR11: every documented attribute must be present in the schema.
+// every documented attribute must be present in the schema.
 func TestEmployeesDataSource_SchemaShape(t *testing.T) {
 	ds := NewEmployeesDataSource()
 
@@ -174,7 +174,7 @@ func TestEmployeesDataSource_ReadSurfacesClientError(t *testing.T) {
 	}
 }
 
-// FR5 / pre-mortem finding 4: with skip_credential_validation set, provider
+// Pre-mortem finding 4: with skip_credential_validation set, provider
 // configuration must make no network call at all.
 func TestConfigure_SkipCredentialValidationMakesNoPingCall(t *testing.T) {
 	fc := &fakeClient{pingErr: errors.New("Ping must not be called")}

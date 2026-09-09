@@ -31,8 +31,8 @@ func TestProvider_Metadata(t *testing.T) {
 	}
 }
 
-// FR3: every configurable attribute must exist, and the credential must be
-// marked Sensitive so Terraform redacts it in plan output (SEC1.2).
+// every configurable attribute must exist, and the credential must be
+// marked Sensitive so Terraform redacts it in plan output.
 func TestProvider_SchemaAttributes(t *testing.T) {
 	p := newTestProvider(t)
 
@@ -58,7 +58,7 @@ func TestProvider_SchemaAttributes(t *testing.T) {
 			continue
 		}
 		if attr.IsRequired() {
-			t.Errorf("attribute %q is Required; all provider attributes must be Optional so environment fallback works (SEC1.4)", name)
+			t.Errorf("attribute %q is Required; all provider attributes must be Optional so environment fallback works", name)
 		}
 	}
 
@@ -67,7 +67,7 @@ func TestProvider_SchemaAttributes(t *testing.T) {
 		t.Fatal("api_key attribute missing")
 	}
 	if !apiKey.IsSensitive() {
-		t.Error("api_key must be Sensitive (SEC1.2) — otherwise the credential appears in plan output")
+		t.Error("api_key must be Sensitive — otherwise the credential appears in plan output")
 	}
 }
 
@@ -93,7 +93,7 @@ func TestProvider_SchemaIsValid(t *testing.T) {
 	}
 }
 
-// FR11: the data source must be registered, or no configuration can use it.
+// the data source must be registered, or no configuration can use it.
 func TestProvider_RegistersEmployeesDataSource(t *testing.T) {
 	p := newTestProvider(t)
 
@@ -126,7 +126,7 @@ func TestProvider_RegistersExpectedResources(t *testing.T) {
 		names = append(names, resp.TypeName)
 	}
 
-	// ARCH1.9 was resolved on 2026-09-01 — medarbejderNr, workerNr, and
+	// Resolved 2026-09-01 — medarbejderNr, workerNr, and
 	// employeeNumber are confirmed to be one value — so kala_employee is now
 	// registered.
 	if !contains(names, "kala_employee") {

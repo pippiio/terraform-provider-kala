@@ -44,7 +44,7 @@ func parseGoFiles(t *testing.T, mode parser.Mode) map[string]*ast.File {
 // They live in package client_test (external) so they see exactly the surface a
 // real consumer sees.
 
-// ARCH1.1: internal/client must not import terraform-plugin-framework. The
+// internal/client must not import terraform-plugin-framework. The
 // client layer knows nothing about Terraform types or diagnostics; violating
 // this is what makes a provider's API layer untestable in isolation.
 func TestLayering_NoTerraformFrameworkImports(t *testing.T) {
@@ -54,7 +54,7 @@ func TestLayering_NoTerraformFrameworkImports(t *testing.T) {
 		for _, imp := range file.Imports {
 			path := strings.Trim(imp.Path.Value, `"`)
 			if strings.Contains(path, forbidden) {
-				t.Errorf("ARCH1.1 violation: %s imports %q", fileName, path)
+				t.Errorf("layering violation: %s imports %q — this package must stay Terraform-agnostic", fileName, path)
 			}
 		}
 	}
@@ -63,7 +63,7 @@ func TestLayering_NoTerraformFrameworkImports(t *testing.T) {
 // The provider must never see a wire type. If webapiv2's JSON shape leaked into
 // the exported surface, the second backend (the internal app API, which calls
 // the same concept a "worker" with different fields) could not satisfy the
-// interface — which is risk R7.
+// interface.
 func TestLayering_NoWireTypesExported(t *testing.T) {
 	for fileName, file := range parseGoFiles(t, 0) {
 		ast.Inspect(file, func(n ast.Node) bool {
@@ -93,7 +93,7 @@ func TestLayering_NoWireTypesExported(t *testing.T) {
 
 // The domain interface must stay domain-shaped. Method names taken from
 // webapiv2's endpoints would make the interface a rename rather than an
-// abstraction (risk R7, pre-mortem finding 1).
+// abstraction (pre-mortem finding 1).
 func TestLayering_InterfaceIsDomainShaped(t *testing.T) {
 	endpointNames := []string{
 		"ActiveEmployeesList",
@@ -118,7 +118,7 @@ func TestLayering_InterfaceIsDomainShaped(t *testing.T) {
 				for _, name := range m.Names {
 					for _, ep := range endpointNames {
 						if name.Name == ep {
-							t.Errorf("Client.%s is named after a webapiv2 endpoint; the interface must be domain-shaped so a second backend can satisfy it (R7)", name.Name)
+							t.Errorf("Client.%s is named after a webapiv2 endpoint; the interface must be domain-shaped so a second backend can satisfy it", name.Name)
 						}
 					}
 				}
@@ -128,7 +128,7 @@ func TestLayering_InterfaceIsDomainShaped(t *testing.T) {
 	}
 }
 
-// Guardrail NFR5 / Code Quality: no fmt.Print* anywhere in the client.
+// Code quality: no fmt.Print* anywhere in the client.
 // golangci-lint enforces this too, but a test means it fails even if someone
 // disables the linter.
 func TestNoFmtPrintInClientSource(t *testing.T) {

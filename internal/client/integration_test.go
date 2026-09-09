@@ -8,7 +8,7 @@ import (
 )
 
 // Integration probes against a REAL Kala tenant. Every one is skipped unless
-// explicitly enabled, so `go test ./...` and CI stay hermetic (NFR3).
+// explicitly enabled, so `go test ./...` and CI stay hermetic.
 //
 //	KALA_PROBE=1       read-only
 //	KALA_CREATE=1      CREATES A REAL EMPLOYEE — irreversible, Kala has no delete
@@ -35,7 +35,7 @@ func TestIntegration_InternalRead(t *testing.T) {
 
 	t.Logf("handshake OK; %d worker(s)", len(workers))
 	for _, w := range workers {
-		// Identifiers and state only — never names or phone numbers (SEC1.5).
+		// Identifiers and state only — never names or phone numbers.
 		t.Logf("  workerNr=%d workerId=%d isValidated=%t", w.WorkerNr, w.WorkerID, w.IsValidated)
 	}
 }
@@ -76,7 +76,7 @@ func TestIntegration_CreateEmployee(t *testing.T) {
 	}
 	t.Logf("created workerNr=%d workerId=%d isValidated=%t", created.WorkerNr, created.WorkerID, created.IsValidated)
 
-	// The identifier experiment (formerly blocked by ARCH1.9).
+	// The identifier experiment.
 	emp, err := New(Config{APIKey: os.Getenv("KALA_API_KEY")}).GetEmployee(ctx, num)
 	if err != nil {
 		t.Fatalf("webapiv2 does not see employeeNumber=%d: %v", num, err)

@@ -177,7 +177,7 @@ func TestSetWorkerRole_UnknownRoleIsRejected(t *testing.T) {
 	}
 }
 
-// ARCH1.8 again: a write that does not take effect must fail.
+// a write that does not take effect must fail.
 func TestSetWorkerField_UnverifiedWriteFails(t *testing.T) {
 	m := newFieldMock(t)
 	// Serve a WorkerInfo that never reflects the write.
@@ -517,7 +517,7 @@ func TestSetWorkerName_UsesTheObservedPathAndIdentifierKey(t *testing.T) {
 	}
 }
 
-// ARCH1.8: a rename is only real if it reads back. This is the exact shape
+// a rename is only real if it reads back. This is the exact shape
 // SetEmailNew was caught in — HTTP 200, nothing changed.
 func TestSetWorkerName_FailsWhenUnverified(t *testing.T) {
 	m := newFieldMock(t)
@@ -611,7 +611,7 @@ func TestSetWorkerBoss_PropagatesHTTPFailure(t *testing.T) {
 }
 
 // If the write lands but verification cannot run, that is not a success: an
-// unverifiable write is reported as such rather than assumed good (ARCH1.8).
+// unverifiable write is reported as such rather than assumed good.
 func TestSetWorkerBoss_UnverifiableWriteIsAnError(t *testing.T) {
 	m := newFieldMock(t)
 	m.rejectAt = "WorkerInfo"

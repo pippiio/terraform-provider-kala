@@ -12,15 +12,15 @@ import (
 )
 
 // Defaults chosen conservatively: the API documents no rate limits, so the
-// client must not be the reason one is discovered (risk R3).
+// client must not be the reason one is discovered.
 const (
 	DefaultEndpoint    = "https://app.kala.dk/webapiv2"
 	defaultTimeout     = 30 * time.Second
 	defaultMaxRetries  = 3
 	defaultRetryBase   = 200 * time.Millisecond
 	maxRetryBackoff    = 10 * time.Second
-	defaultPageSize    = 500 // well below the API's documented default of 5000 (risk R4)
-	defaultMaxPages    = 100 // guarantees termination (GO1.6)
+	defaultPageSize    = 500 // well below the API's documented default of 5000
+	defaultMaxPages    = 100 // guarantees termination
 	maxErrorBodySample = 512 // bounded: an error body of unknown shape is never fully buffered
 )
 
@@ -63,7 +63,7 @@ func (c Config) withDefaults() Config {
 
 // webAPIv2 is the documented public API implementation. It carries every write
 // path the provider will ever use; the internal app API is read-only by policy
-// (guardrail ARCH1.3).
+// .
 type webAPIv2 struct {
 	cfg Config
 }
@@ -84,7 +84,7 @@ func New(cfg Config) Client {
 // endpoint.
 //
 // The API is inconsistent with itself: Index spells it "apikey" while every
-// other endpoint spells it "api_key" (FR7). Hardcoding one spelling is a defect.
+// other endpoint spells it "api_key". Hardcoding one spelling is a defect.
 func authParam(endpoint string) string {
 	if endpoint == "Index" {
 		return "apikey"
@@ -97,7 +97,7 @@ func authParam(endpoint string) string {
 //
 // Retries use exponential backoff and are honoured only for server and
 // transport failures. The body is read fully only on 2xx; on any other status
-// the body is sampled for context but never decoded (risk R6).
+// the body is sampled for context but never decoded.
 func (c *webAPIv2) get(ctx context.Context, endpoint string, params url.Values) ([]byte, error) {
 	return c.do(ctx, http.MethodGet, endpoint, params)
 }
@@ -143,7 +143,7 @@ func (c *webAPIv2) do(ctx context.Context, method, endpoint string, params url.V
 
 // attempt performs exactly one HTTP request.
 func (c *webAPIv2) attempt(ctx context.Context, method, target string) ([]byte, error) {
-	// Context-carrying request so Terraform cancellation propagates (GO1.5).
+	// Context-carrying request so Terraform cancellation propagates.
 	req, err := http.NewRequestWithContext(ctx, method, target, nil)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrTransport, sanitizeError(err))
@@ -159,7 +159,7 @@ func (c *webAPIv2) attempt(ctx context.Context, method, target string) ([]byte, 
 		}
 		return nil, fmt.Errorf("%w: %v", ErrTransport, sanitizeError(err))
 	}
-	defer func() { _ = resp.Body.Close() }() // GO1.1
+	defer func() { _ = resp.Body.Close() }()
 
 	return readBody(resp)
 }
@@ -168,7 +168,7 @@ func (c *webAPIv2) attempt(ctx context.Context, method, target string) ([]byte, 
 //
 // Shared by both API clients. A non-2xx body is never decoded — its shape is
 // undocumented — but a bounded, sanitized sample is carried as error context
-// (risk R6).
+// .
 func readBody(resp *http.Response) ([]byte, error) {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		sample, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodySample))
@@ -224,7 +224,7 @@ func (c *webAPIv2) GetEmployee(ctx context.Context, number int64) (Employee, err
 // ListEmployees returns active employees, following pagination.
 //
 // Termination is guaranteed three ways: a short page ends the loop, an empty
-// page ends the loop, and MaxPages caps the total regardless (GO1.6).
+// page ends the loop, and MaxPages caps the total regardless.
 func (c *webAPIv2) ListEmployees(ctx context.Context, opts ListOptions) ([]Employee, error) {
 	pageSize := opts.PageSize
 	if pageSize <= 0 {

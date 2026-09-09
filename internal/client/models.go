@@ -8,10 +8,10 @@ import (
 
 // Wire types mirror the webapiv2 JSON exactly and are deliberately unexported:
 // nothing outside this package should know the upstream's field names or its
-// PascalCase/camelCase quirks (guardrail ARCH1.4, risk R7).
+// PascalCase/camelCase quirks.
 //
 // The API documents these field NAMES but not their types, so the types below
-// are a hypothesis to be confirmed by the Phase 4 smoke test (risk R1).
+// are a hypothesis to be confirmed by the Phase 4 smoke test.
 
 type wireEmployee struct {
 	// Number is a pointer so that "absent" and "present but 0" are
@@ -75,7 +75,7 @@ func (w wireEmployee) toDomain() (Employee, error) {
 // An empty body means the record does not exist. Observed 2026-09-01 against
 // the real API: requesting an unknown employeeNumber returns HTTP 200 with
 // content-length 0 rather than 404. Treating that as a decode failure would
-// make Read error instead of detecting drift (guardrail TF1.2).
+// make Read error instead of detecting drift.
 func decodeEmployee(body []byte) (Employee, error) {
 	if len(bytes.TrimSpace(body)) == 0 {
 		return Employee{}, fmt.Errorf("%w: the API returned an empty body, which means no such employee", ErrNotFound)

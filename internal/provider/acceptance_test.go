@@ -256,7 +256,7 @@ func checkDestroyDeactivates(t *testing.T, number int64) resource.TestCheckFunc 
 // --- tests ----------------------------------------------------------------
 
 // The core lifecycle: create (or adopt), update fields in place, and destroy
-// into deactivation. Every step ends with a plan that must be empty (TF1.4).
+// into deactivation. Every step ends with a plan that must be empty.
 func TestAccEmployee_lifecycle(t *testing.T) {
 	if os.Getenv("TF_ACC") == "" {
 		t.Skip("acceptance test; set TF_ACC=1 to run")

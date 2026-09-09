@@ -2,13 +2,13 @@ version: "2"
 
 linters:
   enable:
-    - errcheck      # GO1.2 — every returned error checked
+    - errcheck      # every returned error checked or explicitly discarded
     - govet
     - staticcheck
     - ineffassign
     - misspell
-    - bodyclose     # GO1.1 — every http.Response.Body closed
-    - forbidigo     # NFR5 — no fmt.Print* in provider code
+    - bodyclose     # every http.Response.Body closed
+    - forbidigo     # no fmt.Print* in provider code
 
   settings:
     forbidigo:
@@ -17,7 +17,7 @@ linters:
       # personal data into Terraform logs. Use tflog instead.
       forbid:
         - pattern: '^fmt\.Print.*$'
-          msg: "fmt.Print* is banned (guardrail NFR5): use tflog. Printing API responses leaks personal data into Terraform logs."
+          msg: "fmt.Print* is banned: use tflog. Printing API responses leaks personal data into Terraform logs."
       analyze-types: true
 
   exclusions:

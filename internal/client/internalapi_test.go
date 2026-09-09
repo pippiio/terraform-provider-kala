@@ -176,7 +176,7 @@ func TestInternal_MissingCredentialsIsAClearError(t *testing.T) {
 	}
 }
 
-// SEC1.3: the password must never reach an error message.
+// the password must never reach an error message.
 func TestInternal_PasswordNeverAppearsInErrors(t *testing.T) {
 	const password = "super-secret-password"
 
@@ -218,7 +218,7 @@ func TestInternal_SetWorkerValidatedDeactivates(t *testing.T) {
 	}
 }
 
-// ARCH1.8: HTTP 200 is not proof. A write that does not take effect must fail.
+// HTTP 200 is not proof. A write that does not take effect must fail.
 func TestInternal_SetWorkerValidatedFailsWhenUnverified(t *testing.T) {
 	m := newInternalMock(t)
 	m.addWorker(42, "Gimli", true)
@@ -507,7 +507,7 @@ func TestInternal_SetWorkerEmailSendsWorkerNrAndEmail(t *testing.T) {
 	}
 }
 
-// ARCH1.8: 200 OK is the endpoint's claim, not proof. A write that does not
+// 200 OK is the endpoint's claim, not proof. A write that does not
 // take effect must fail.
 func TestInternal_SetWorkerEmailFailsWhenUnverified(t *testing.T) {
 	c, _ := emailMock(t, false, 0) // accepts the write, never applies it

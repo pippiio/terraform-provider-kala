@@ -30,7 +30,7 @@ func isSensitiveParam(name string) bool {
 //
 // This exists because the Kala API accepts credentials as query parameters
 // rather than headers, which makes the otherwise-natural act of wrapping an
-// error with its request URL a credential leak (guardrail SEC1.3, risk R2).
+// error with its request URL a credential leak.
 // Every error and log path in this package routes through here.
 //
 // It fails closed: if raw cannot be parsed we cannot prove the credential is

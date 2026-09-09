@@ -13,7 +13,7 @@ import (
 )
 
 // Pagination must terminate under every condition the API can produce.
-// An unbounded loop against a paginated endpoint is guardrail GO1.6's target.
+// An unbounded loop against a paginated endpoint is 's target.
 
 // pageServer serves `total` synthetic employees, honouring page/page_size.
 func pageServer(t *testing.T, total int, calls *int32) *httptest.Server {
@@ -168,7 +168,7 @@ func TestListEmployees_DefaultsAreApplied(t *testing.T) {
 	if gotOrder != "asc" {
 		t.Errorf("order = %q, want asc (the API default)", gotOrder)
 	}
-	// Deliberately below the API's documented default of 5000 (risk R4).
+	// Deliberately below the API's documented default of 5000.
 	if gotPageSize != strconv.Itoa(defaultPageSize) {
 		t.Errorf("page_size = %q, want %d", gotPageSize, defaultPageSize)
 	}
@@ -193,7 +193,7 @@ func TestListEmployees_PropagatesServerError(t *testing.T) {
 }
 
 func TestAuthParam_IndexUsesDifferentSpelling(t *testing.T) {
-	// The API contradicts itself; the client must not assume one spelling (FR7).
+	// The API contradicts itself; the client must not assume one spelling.
 	if got := authParam("Index"); got != "apikey" {
 		t.Errorf("authParam(Index) = %q, want apikey", got)
 	}
