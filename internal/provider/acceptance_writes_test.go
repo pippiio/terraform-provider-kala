@@ -295,56 +295,96 @@ func accCheckCaseUpstream(t *testing.T, number string, check func(client.CaseDet
 	}
 }
 
-// Archiving is reversible, so this restores the case rather than leaving it
-// archived. CheckDestroy asserts the ARCHIVE happened -- the usual "the record
-// is gone" assertion would be false, because Kala cannot delete a case.
-func TestAccCase_archiveRoundTrip(t *testing.T) {
+// Archive and unarchive, in both directions, from whatever state the case is
+// found in.
+//
+// The test UNARCHIVES first if it needs to, so it never skips on tenant state,
+// then exercises archive and unarchive as first-class steps rather than
+// treating one of them as cleanup. Both directions matter: archive is what
+// destroy does, and unarchive is the only thing that undoes it.
+//
+// Whatever happens, the case is put back the way it was found.
+func TestAccCase_archiveAndUnarchiveRoundTrip(t *testing.T) {
 	skipUnlessAcc(t)
+
 	number := os.Getenv(envAccCaseNumber)
 	c := accInternalClient(t)
+	ctx := context.Background()
 
-	before, err := c.GetCase(context.Background(), number)
+	before, err := c.GetCase(ctx, number)
 	if err != nil {
 		t.Fatalf("reading case %s: %v", number, err)
 	}
+
+	// Setup, not cleanup: the test needs an ACTIVE case to archive, and a case
+	// left archived by an earlier interrupted run would otherwise make it skip
+	// forever. Unarchiving here is also the first assertion that unarchive
+	// works at all.
 	if before.Archived {
-		t.Skipf("case %s is already archived; this test needs an active one", number)
+		t.Logf("case %s was archived; unarchiving it so the round trip can run", number)
+		if err := c.SetCaseArchived(ctx, number, false); err != nil {
+			t.Fatalf("could not unarchive case %s to set up the test: %v", number, err)
+		}
+		if got, err := c.GetCase(ctx, number); err != nil || got.Archived {
+			t.Fatalf("case %s is still archived after unarchiving it: %v", number, err)
+		}
 	}
 
-	// Whatever happens, put the case back where it was found.
+	// Restore the state the case was found in, whatever the test does.
 	t.Cleanup(func() {
-		if err := c.SetCaseArchived(context.Background(), number, false); err != nil {
-			t.Errorf("could not restore case %s to the active set: %v", number, err)
+		if err := c.SetCaseArchived(ctx, number, before.Archived); err != nil {
+			t.Errorf("could not restore case %s to archived=%t: %v", number, before.Archived, err)
 		}
 	})
 
-	cfg := fmt.Sprintf(`
+	cfg := func(archived bool) string {
+		return fmt.Sprintf(`
 resource "kala_case" "acc" {
   name            = %q
   customer_number = %q
   worker_number   = %d
-  archived        = true
-}`, before.Name, accCaseCustomerNumber(t, before), accNumber(t, envAccNumber))
+  archived        = %t
+}`, before.Name, accCaseCustomerNumber(t, before), accNumber(t, envAccNumber), archived)
+	}
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { accWritePreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config:             cfg,
+				Config:             cfg(false),
 				ResourceName:       "kala_case.acc",
 				ImportState:        true,
 				ImportStateId:      number,
 				ImportStatePersist: true,
 			},
 			{
-				Config: cfg,
-				Check: accCheckCaseUpstream(t, number, func(d client.CaseDetail) error {
-					if !d.Archived {
-						return fmt.Errorf("case %s was not archived", number)
-					}
-					return nil
-				}),
+				// Archive. This is also what destroy does.
+				Config: cfg(true),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("kala_case.acc", "archived", "true"),
+					accCheckCaseUpstream(t, number, func(d client.CaseDetail) error {
+						if !d.Archived {
+							return fmt.Errorf("case %s was not archived upstream", number)
+						}
+						return nil
+					}),
+				),
+			},
+			{
+				// Unarchive. Archival being REVERSIBLE and VERIFIABLE is what
+				// let ADR-003 make destroy archive rather than only forget, so
+				// this direction is load-bearing and not merely tidy-up.
+				Config: cfg(false),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("kala_case.acc", "archived", "false"),
+					accCheckCaseUpstream(t, number, func(d client.CaseDetail) error {
+						if d.Archived {
+							return fmt.Errorf("case %s was not returned to the active set", number)
+						}
+						return nil
+					}),
+				),
 			},
 		},
 	})

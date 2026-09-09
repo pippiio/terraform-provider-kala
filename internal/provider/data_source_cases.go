@@ -146,9 +146,13 @@ func (d *casesDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, 
 				MarkdownDescription: "Return only cases whose customer company matches exactly, " +
 					"ignoring case.\n\n" +
 					"**Applied client-side.** The case list carries the customer's company as text " +
-					"but no customer id, so this is string matching rather than a join: it will not " +
-					"follow a renamed company, and two customers sharing a company name are " +
-					"indistinguishable here. Use `kala_customer` when you need the id.\n\n" +
+					"but no customer id, so this is string matching rather than a join, and two " +
+					"customers sharing a company name are indistinguishable here. Use " +
+					"`kala_customer` when you need the id.\n\n" +
+					"Renaming a customer DOES cascade to its cases (verified 2026-09-09), so the " +
+					"text stays consistent with the customer record. The hazard is a **hardcoded** " +
+					"value: after a rename it silently matches nothing. Derive it from " +
+					"`kala_customer.company` rather than writing the name literally.\n\n" +
 					"Deliberately not pushed into `search`, which is a broad text match over case " +
 					"names as well as customer fields, so narrowing with it could drop cases that " +
 					"genuinely match.\n\n" +

@@ -56,7 +56,9 @@ data "kala_cases" "internal_projects" {
 **These are disjoint sets, not a narrowing filter.** `true` returns only non-archived cases; `false` returns only archived ones. Kala offers **no single call that returns both**, so retrieving every case requires two `kala_cases` blocks, one per value.
 - `customer_company` (String) Return only cases whose customer company matches exactly, ignoring case.
 
-**Applied client-side.** The case list carries the customer's company as text but no customer id, so this is string matching rather than a join: it will not follow a renamed company, and two customers sharing a company name are indistinguishable here. Use `kala_customer` when you need the id.
+**Applied client-side.** The case list carries the customer's company as text but no customer id, so this is string matching rather than a join, and two customers sharing a company name are indistinguishable here. Use `kala_customer` when you need the id.
+
+Renaming a customer DOES cascade to its cases (verified 2026-09-09), so the text stays consistent with the customer record. The hazard is a **hardcoded** value: after a rename it silently matches nothing. Derive it from `kala_customer.company` rather than writing the name literally.
 
 Deliberately not pushed into `search`, which is a broad text match over case names as well as customer fields, so narrowing with it could drop cases that genuinely match.
 
