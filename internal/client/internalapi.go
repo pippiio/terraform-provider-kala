@@ -139,6 +139,18 @@ type InternalClient interface {
 	// This is the ONLY way to create an employee in Kala — webapiv2 has no
 	// equivalent. It is verified by read-back like every internal-API write.
 	CreateWorker(ctx context.Context, in NewWorker) (Worker, error)
+
+	// ListCustomers reads customers, reporting how much of the account it covered.
+	ListCustomers(ctx context.Context, q CustomerQuery) (CustomerScan, error)
+
+	// ListCases reads one set of cases -- archived or not, per q.Archived.
+	ListCases(ctx context.Context, q CaseQuery) (CaseScan, error)
+
+	// GetCase reads one case by its string case number.
+	GetCase(ctx context.Context, caseNumber string) (CaseDetail, error)
+
+	// ListTasks reads the checklist items of one case. q.CaseID is required.
+	ListTasks(ctx context.Context, q TaskQuery) (TaskScan, error)
 }
 
 // WorkerInfo is the detailed worker record from /api/WorkerInfo.
