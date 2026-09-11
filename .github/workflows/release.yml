@@ -1,0 +1,100 @@
+name: Release
+
+# Tags must match v[0-9]* to satisfy the repository's tag-naming ruleset, and
+# tag creation is itself restricted — see docs/private-distribution.md.
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'
+
+permissions:
+  contents: write # required to create the GitHub Release
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false # never interrupt a release mid-upload
+
+jobs:
+  verify:
+    # A tag can be pushed to any commit, including one that never passed CI.
+    # Re-running the checks here means a release cannot be cut from a red tree.
+    name: Verify before release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Formatting
+        run: make fmt-check
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v9.3.0
+        with:
+          version: latest
+
+      - name: Unit tests
+        run: make cover
+
+  release:
+    name: Build and publish
+    needs: verify
+    runs-on: ubuntu-latest
+    env:
+      # Job-level so the step `if` below can read it: step-level env is not
+      # available to that same step's condition.
+      HAS_GPG: ${{ secrets.GPG_PRIVATE_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # goreleaser needs full history for the changelog
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Signing is optional. Without a key the release still builds and
+      # publishes; the checksum file simply has no detached signature, so
+      # consumers can verify integrity but not provenance.
+      - name: Import GPG key
+        id: gpg
+        if: env.HAS_GPG == 'true'
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: Release (signed)
+        if: ${{ steps.gpg.outcome == 'success' }}
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: '~> v2'
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GPG_FINGERPRINT: ${{ steps.gpg.outputs.fingerprint }}
+
+      - name: Release (unsigned)
+        if: ${{ steps.gpg.outcome != 'success' }}
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: '~> v2'
+          args: release --clean --skip=sign
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Note when the release is unsigned
+        if: ${{ steps.gpg.outcome != 'success' }}
+        run: |
+          echo "### Unsigned release" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "No \`GPG_PRIVATE_KEY\` secret is configured, so the checksum file" >> "$GITHUB_STEP_SUMMARY"
+          echo "carries no detached signature. Consumers can verify artifact" >> "$GITHUB_STEP_SUMMARY"
+          echo "integrity from \`SHA256SUMS\`, but not provenance." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "See \`docs/private-distribution.md\` to enable signing." >> "$GITHUB_STEP_SUMMARY"

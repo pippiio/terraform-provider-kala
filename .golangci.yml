@@ -1,0 +1,33 @@
+version: "2"
+
+linters:
+  enable:
+    - errcheck      # every returned error checked or explicitly discarded
+    - govet
+    - staticcheck
+    - ineffassign
+    - misspell
+    - bodyclose     # every http.Response.Body closed
+    - forbidigo     # no fmt.Print* in provider code
+
+  settings:
+    forbidigo:
+      # Guardrail "Code Quality": fmt.Print* is banned in provider and client code.
+      # The reference prototype printed raw API responses to stdout, leaking employee
+      # personal data into Terraform logs. Use tflog instead.
+      forbid:
+        - pattern: '^fmt\.Print.*$'
+          msg: "fmt.Print* is banned: use tflog. Printing API responses leaks personal data into Terraform logs."
+      analyze-types: true
+
+  exclusions:
+    rules:
+      # Test files may print for diagnostic purposes.
+      - path: _test\.go
+        linters:
+          - forbidigo
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

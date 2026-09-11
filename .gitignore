@@ -1,0 +1,31 @@
+# Built provider binary
+terraform-provider-kala
+
+# Terraform working files
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.backup
+crash.log
+crash.*.log
+
+# Credentials — never commit. The provider reads KALA_API_KEY from the environment.
+*.tfvars
+*.tfvars.json
+.env
+.envrc
+
+# Go build/test artifacts
+*.test
+*.out
+coverage.out
+coverage.html
+dist/
+
+# Draft working context — local only, not part of the published provider
+draft/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
