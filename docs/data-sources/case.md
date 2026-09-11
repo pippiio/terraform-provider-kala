@@ -51,7 +51,7 @@ data "kala_case" "one" {
 - `customer_company` (String) Customer company name.
 - `customer_email` (String) Customer email address. **Null unless `include_contact_details` is set** -- contact data is personal data and everything exposed here is written to Terraform state.
 - `customer_id` (Number) The customer this case belongs to. Null on internal projects. Join to `kala_customer.id`.
-- `customer_name` (String) Customer contact name, denormalised onto the case.
+- `customer_name` (String) Contact name for **this case** — the person to call about this job. Despite the attribute name this is the CASE's own contact, not a copy of the customer's record: changing it does not touch `kala_customer` (verified 2026-09-08).
 - `customer_phone` (String) Customer phone number. **Null unless `include_contact_details` is set** -- contact data is personal data and everything exposed here is written to Terraform state.
 - `deadline` (String) Case deadline, as RFC 3339. Null when unset upstream.
 - `economy_case_number` (String) The e-conomic case number. In practice this **mirrors `number`**, including on Kala-native internal projects that have no e-conomic counterpart.

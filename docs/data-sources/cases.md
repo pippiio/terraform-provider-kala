@@ -56,7 +56,9 @@ data "kala_cases" "internal_projects" {
 **These are disjoint sets, not a narrowing filter.** `true` returns only non-archived cases; `false` returns only archived ones. Kala offers **no single call that returns both**, so retrieving every case requires two `kala_cases` blocks, one per value.
 - `customer_company` (String) Return only cases whose customer company matches exactly, ignoring case.
 
-**Applied client-side.** The case list carries the customer's company as text but no customer id, so this is string matching rather than a join: it will not follow a renamed company, and two customers sharing a company name are indistinguishable here. Use `kala_customer` when you need the id.
+**Applied client-side.** The case list carries the customer's company as text but no customer id, so this is string matching rather than a join, and two customers sharing a company name are indistinguishable here. Use `kala_customer` when you need the id.
+
+Renaming a customer DOES cascade to its cases (verified 2026-09-09), so the text stays consistent with the customer record. The hazard is a **hardcoded** value: after a rename it silently matches nothing. Derive it from `kala_customer.company` rather than writing the name literally.
 
 Deliberately not pushed into `search`, which is a broad text match over case names as well as customer fields, so narrowing with it could drop cases that genuinely match.
 
@@ -80,7 +82,7 @@ Read-Only:
 - `archived` (Boolean) Whether this case is archived. Derived from which set was requested, not from a response field: the list endpoint's own `isFinished` tracks archived-ness rather than completion and disagrees with the detail endpoint.
 - `customer_company` (String) Customer company name.
 - `customer_email` (String) Customer email address. **Null unless `include_contact_details` is set** -- contact data is personal data and everything exposed here is written to Terraform state.
-- `customer_name` (String) Customer contact name, denormalised onto the case.
+- `customer_name` (String) Contact name for **this case** — the person to call about this job. Despite the attribute name this is the CASE's own contact, not a copy of the customer's record: changing it does not touch `kala_customer` (verified 2026-09-08).
 - `customer_phone` (String) Customer phone number. **Null unless `include_contact_details` is set** -- contact data is personal data and everything exposed here is written to Terraform state.
 - `economy_case_number` (String) The e-conomic case number. In practice this **mirrors `number`**, including on Kala-native internal projects that have no e-conomic counterpart.
 - `favorite` (Boolean) Whether the case is flagged as a favourite.

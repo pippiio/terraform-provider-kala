@@ -102,16 +102,30 @@ is visible rather than hidden inside the provider.
 
 Assignee filtering is applied **client-side**, because Kala accepts no assignee
 parameter. It narrows the result without reducing what was read, which is why
-`complete` still describes the read. Only the responsible worker is matched; the
-`workersAssigned` collection has never been observed populated, so its shape is
-unknown and it is not exposed.
+`complete` still describes the read. Only the **responsible** worker is matched
+by that filter — a task also carries the set of workers linked to it, which is a
+different thing and is managed by `kala_task_assignment`.
 
 ### `customer_company` matches text; it is not a join
 
 The case list carries the customer's company name but **no customer id**, so
-`kala_cases.customer_company` compares strings. It will not follow a renamed
-company, and two customers sharing a company name are indistinguishable through
-it. Use `kala_customer` when you need an id.
+`kala_cases.customer_company` compares strings, and two customers sharing a
+company name are indistinguishable through it. Use `kala_customer` when you need
+an id.
+
+Renaming a customer **does** cascade to its cases — verified 2026-09-09 by
+renaming one and watching both its cases follow, while another customer's case
+was untouched. So the text does not go stale against the customer record.
+
+The hazard is a **hardcoded** name. After a rename, a configuration that spelled
+the old value out matches nothing and the data source silently returns an empty
+list. Derive it instead:
+
+```hcl
+data "kala_cases" "theirs" {
+  customer_company = data.kala_customer.target.company
+}
+```
 
 It is also deliberately not pushed into the upstream `search` parameter, which
 matches case *names* as well as customer fields — narrowing with it could drop
@@ -123,11 +137,27 @@ cases that genuinely match.
 |-------|------|------|
 | `kala_case.number` | string | e.g. `KA-1`. How a case is **addressed** |
 | `kala_case.id` | number | How a case is **referenced** by `kala_tasks.case_id` |
-| `kala_customer.number` | string | A string here; `webapiv2` spells the same field as an integer, and the two are not known to hold the same value |
+| `kala_customer.number` | string | Allocated by Kala, not chosen. A string on **both** APIs, holding the same value (verified 2026-09-07) |
 
 `economy_case_number` mirrors `number` on every case observed, including
 Kala-native internal projects that have no e-conomic counterpart. Do not treat it
 as evidence of an e-conomic link.
+
+### Assignment is a job link, not a field
+
+Kala assigns work by linking a worker to a **case**, then scoping that link to a
+set of checklist items. The link is **shared**: an employee on two tasks of one
+case has one link covering both.
+
+`kala_task_assignment` therefore models the link, and there should be exactly one
+resource per (case, employee) pair. Two resources for the same pair would
+overwrite each other's membership on every apply. This is also why `kala_task`
+has no writable assignee attribute — a per-task field would hide the sharing and
+turn it into a race.
+
+There is no way to read a job link directly, so the provider reads assignment
+from the task list, and no way to remove one, so destroy detaches every task the
+link covers and warns that the link itself remains.
 
 ### Fields that are absent, not empty
 
@@ -137,6 +167,15 @@ identity and customer name must come from `kala_case`.
 `is_finished` is exposed only from the detail endpoint, where it means
 completion. The list endpoint has a field of the same name that tracks
 *archived-ness* and disagrees with it, so it is not exposed at all.
+
+Task **deadlines are second-precision**. Kala does not round-trip finer: the
+create response echoes the millisecond value it was given, but the list read
+returns it a few milliseconds later. `kala_task` truncates on both write and
+read so the value converges; exposing a precision the API cannot preserve would
+publish a defect as a feature.
+
+A **case has no deadline**. The attribute exists on `kala_case` reads because the
+detail payload carries the field, but nothing sets it and it is not writable.
 
 `status_name` on tasks is **not translated** — the values come from the
 company-wide `kanban_options` setting and appear in whatever language it uses.
@@ -152,9 +191,16 @@ never confirmed and they are not exposed.
   usefully.
 - Multi-company behaviour is untested: the `kacompany` header is sent, but
   development had access to a single-company account only.
-- Kala documents no rate limits. Requests are bounded, retried with backoff on
-  5xx and never on 4xx, but a large `for_each` over cases still generates one
-  request per case.
+- Kala documents no rate limits, and **whether it enforces any is unknown**.
+  Establishing that would mean issuing many real writes, and every write in this
+  provider creates something that cannot be deleted — so it has deliberately not
+  been measured. Requests are bounded, retried with backoff on 5xx and never on
+  4xx, but a large `for_each` still generates one request per resource.
+
+  What *is* established: Terraform's default parallelism of 10 produces **one**
+  authentication, not ten. The handshake is serialised behind a mutex and its
+  session shared, so concurrent operations do not each sign in, and every
+  request carries the company header regardless of which one authenticated.
 
 ### Data in Terraform state
 

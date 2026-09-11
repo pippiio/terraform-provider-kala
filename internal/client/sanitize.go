@@ -28,6 +28,29 @@ var sensitiveParams = []string{
 	"username",
 }
 
+// personalDataKeys are JSON field names carrying personal data. They are not
+// credentials, and nothing is compromised by their disclosure the way a token
+// would be -- so they are redacted for a different reason.
+//
+// The write endpoints send whole records: a customer body carries an email, a
+// phone number, an address, and a CVR. Kala echoes request data back inside
+// error responses -- observed on its webapiv2 500 page, which returns the full
+// query string -- so a single upstream failure would otherwise put that record
+// into a Terraform diagnostic, and from there into CI logs, which are routinely
+// readable by more people than the .tf file is. The operator authored the data;
+// that is not the same as consenting to broadcast it on every 500.
+//
+// The rule is: log identifiers, not records.
+// Identifiers are deliberately NOT here -- customerId, number, and caseNr must
+// survive redaction, because an error naming no record is not diagnosable.
+//
+// Applied to the JSON pass only. Query strings on this API carry identifiers
+// rather than record fields, and names this generic would over-redact URLs.
+var personalDataKeys = []string{
+	"firstName", "lastName", "email", "phone", "address", "zip", "city",
+	"cvr", "ean",
+}
+
 func isSensitiveParam(name string) bool {
 	for _, s := range sensitiveParams {
 		if strings.EqualFold(name, s) {
@@ -174,7 +197,7 @@ func isValueTerminator(c byte) bool {
 // error-body sample that is frequently truncated and often not valid JSON at
 // all, and failing to parse must not mean failing to redact.
 func redactJSONValues(s string) string {
-	for _, name := range sensitiveParams {
+	for _, name := range append(append([]string{}, sensitiveParams...), personalDataKeys...) {
 		needle := `"` + name + `"`
 		from := 0
 		for {

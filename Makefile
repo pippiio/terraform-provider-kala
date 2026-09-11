@@ -30,8 +30,13 @@ cover-html: cover
 	go tool cover -html=$(COVER_PROFILE)
 
 ## lint: run golangci-lint
+##       Uses `go run` so the gate cannot be skipped for want of a local
+##       install. It was silently unrunnable on two tracks: the target assumed
+##       golangci-lint was on PATH, so `make lint` failed with "command not
+##       found" and the gate got asserted rather than executed. `vuln` already
+##       worked this way; now so does this.
 lint:
-	golangci-lint run
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run
 
 ## fmt: format all Go source
 fmt:

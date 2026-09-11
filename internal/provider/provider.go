@@ -255,5 +255,9 @@ func (p *kalaProvider) DataSources(_ context.Context) []func() datasource.DataSo
 func (p *kalaProvider) Resources(_ context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		NewEmployeeResource,
+		NewCustomerResource,
+		NewCaseResource,
+		NewTaskResource,
+		NewTaskAssignmentResource,
 	}
 }

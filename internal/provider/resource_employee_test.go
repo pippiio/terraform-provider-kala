@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -29,6 +30,47 @@ func diagsText(d diag.Diagnostics) string {
 // fakeInternal doubles the internal app API and records every call.
 type fakeInternal struct {
 	workers map[int64]client.Worker
+
+	ensureLinkCalls   [][2]int64
+	setChecklistCalls [][]int64
+	removedItems      []int64
+	lastJobLinkID     int64
+	linkWorker        int64
+	ensureLinkErr     error
+	setChecklistErr   error
+	removeItemErr     error
+	assignedErr       error
+
+	tasks            map[int64]client.Task
+	taskIn           client.TaskInput
+	createTaskCalled bool
+	updateTaskCalled bool
+	createTaskErr    error
+	updateTaskErr    error
+	listTasksErr     error
+	truncateTasks    bool
+
+	cases            map[string]client.CaseDetail
+	caseIn           client.NewCase
+	fieldWrites      map[client.CaseField]string
+	archivedCalls    []bool
+	customerChanges  [][2]any
+	createCaseCalled bool
+	createCaseErr    error
+	archiveErr       error
+	setCustomerErr   error
+	caseFieldErr     error
+	getCaseErr       error
+
+	customers          map[int64]client.Customer
+	customerID         int64
+	customerIn         client.CustomerInput
+	editedID           int64
+	addCustomerCalled  bool
+	editCustomerCalled bool
+	addCustomerErr     error
+	editCustomerErr    error
+	getCustomerErr     error
 
 	createCalled  bool
 	created       client.NewWorker
@@ -104,7 +146,7 @@ func newFakeInternal(workers ...client.Worker) *fakeInternal {
 	for _, w := range workers {
 		m[w.WorkerNr] = w
 	}
-	return &fakeInternal{workers: m}
+	return &fakeInternal{workers: m, customers: map[int64]client.Customer{}, customerID: 4, cases: map[string]client.CaseDetail{}, tasks: map[int64]client.Task{}}
 }
 
 func (f *fakeInternal) ListWorkers(context.Context) ([]client.Worker, error) {
@@ -223,16 +265,239 @@ func (f *fakeInternal) ListCustomers(context.Context, client.CustomerQuery) (cli
 	return client.CustomerScan{}, nil
 }
 
+func (f *fakeInternal) AddCustomer(_ context.Context, in client.CustomerInput) (client.Customer, error) {
+	f.addCustomerCalled = true
+	f.customerIn = in
+	if f.addCustomerErr != nil {
+		// Kala allocated the record before the failure, so the id comes back
+		// with the error -- the shape AddCustomer really returns.
+		return client.Customer{ID: f.customerID}, f.addCustomerErr
+	}
+	c := customerFrom(f.customerID, in)
+	f.customers[f.customerID] = c
+	return c, nil
+}
+
+func (f *fakeInternal) EditCustomer(_ context.Context, id int64, in client.CustomerInput) (client.Customer, error) {
+	f.editCustomerCalled = true
+	f.customerIn = in
+	f.editedID = id
+	if f.editCustomerErr != nil {
+		return client.Customer{ID: id}, f.editCustomerErr
+	}
+	c := customerFrom(id, in)
+	f.customers[id] = c
+	return c, nil
+}
+
+func (f *fakeInternal) GetCustomer(_ context.Context, id int64) (client.Customer, error) {
+	if f.getCustomerErr != nil {
+		return client.Customer{}, f.getCustomerErr
+	}
+	c, ok := f.customers[id]
+	if !ok {
+		return client.Customer{}, fmt.Errorf("customer %d: %w", id, client.ErrNotFound)
+	}
+	return c, nil
+}
+
+func customerFrom(id int64, in client.CustomerInput) client.Customer {
+	return client.Customer{
+		ID: id, Number: fmt.Sprintf("KA-%d", id),
+		FirstName: in.FirstName, LastName: in.LastName, Company: in.Company,
+		Email: in.Email, Phone: in.Phone, Address: in.Address, Zip: in.Zip,
+		CVR: in.CVR, EAN: in.EAN, Description: in.Description,
+		City: "Hobbiton", CaseCount: 0,
+	}
+}
+
 func (f *fakeInternal) ListCases(context.Context, client.CaseQuery) (client.CaseScan, error) {
 	return client.CaseScan{}, nil
 }
 
-func (f *fakeInternal) GetCase(context.Context, string) (client.CaseDetail, error) {
-	return client.CaseDetail{}, nil
+func (f *fakeInternal) GetCase(_ context.Context, caseNumber string) (client.CaseDetail, error) {
+	if f.getCaseErr != nil {
+		return client.CaseDetail{}, f.getCaseErr
+	}
+	d, ok := f.cases[caseNumber]
+	if !ok {
+		return client.CaseDetail{}, fmt.Errorf("case %s: %w", caseNumber, client.ErrNotFound)
+	}
+	return d, nil
 }
 
-func (f *fakeInternal) ListTasks(context.Context, client.TaskQuery) (client.TaskScan, error) {
-	return client.TaskScan{}, nil
+func (f *fakeInternal) EnsureJobLink(_ context.Context, caseID, workerNr int64) (client.JobLink, error) {
+	f.ensureLinkCalls = append(f.ensureLinkCalls, [2]int64{caseID, workerNr})
+	if f.ensureLinkErr != nil {
+		return client.JobLink{}, f.ensureLinkErr
+	}
+	return client.JobLink{ID: 7, CaseID: caseID, CaseNumber: "KA-4", WorkerNr: workerNr}, nil
+}
+
+func (f *fakeInternal) SetJobLinkChecklist(_ context.Context, jobLinkID int64, ids []int64) error {
+	f.setChecklistCalls = append(f.setChecklistCalls, ids)
+	f.lastJobLinkID = jobLinkID
+	if f.setChecklistErr != nil {
+		return f.setChecklistErr
+	}
+	// Reflect into the task list, which is where the read path looks.
+	for id, k := range f.tasks {
+		k.AssignedWorkerNrs = withoutWorker(k.AssignedWorkerNrs, f.linkWorker)
+		f.tasks[id] = k
+	}
+	for _, id := range ids {
+		if k, ok := f.tasks[id]; ok {
+			k.AssignedWorkerNrs = append(k.AssignedWorkerNrs, f.linkWorker)
+			f.tasks[id] = k
+		}
+	}
+	return nil
+}
+
+func (f *fakeInternal) RemoveJobLinkChecklistItem(_ context.Context, caseNumber string, itemID, workerNr int64) error {
+	f.removedItems = append(f.removedItems, itemID)
+	if f.removeItemErr != nil {
+		return f.removeItemErr
+	}
+	if k, ok := f.tasks[itemID]; ok {
+		k.AssignedWorkerNrs = withoutWorker(k.AssignedWorkerNrs, workerNr)
+		f.tasks[itemID] = k
+	}
+	return nil
+}
+
+func (f *fakeInternal) AssignedTaskIDs(_ context.Context, caseID, workerNr int64) ([]int64, error) {
+	if f.assignedErr != nil {
+		return nil, f.assignedErr
+	}
+	var ids []int64
+	for id, k := range f.tasks {
+		if k.CaseID != caseID {
+			continue
+		}
+		for _, nr := range k.AssignedWorkerNrs {
+			if nr == workerNr {
+				ids = append(ids, id)
+				break
+			}
+		}
+	}
+	return ids, nil
+}
+
+func withoutWorker(in []int64, nr int64) []int64 {
+	out := in[:0]
+	for _, v := range in {
+		if v != nr {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func (f *fakeInternal) CreateTask(_ context.Context, in client.TaskInput) (client.Task, error) {
+	f.createTaskCalled = true
+	f.taskIn = in
+	if f.createTaskErr != nil {
+		return client.Task{ID: 9}, f.createTaskErr
+	}
+	k := taskFrom(9, in)
+	f.tasks[9] = k
+	return k, nil
+}
+
+func (f *fakeInternal) UpdateTask(_ context.Context, id int64, in client.TaskInput) (client.Task, error) {
+	f.updateTaskCalled = true
+	f.taskIn = in
+	if f.updateTaskErr != nil {
+		return client.Task{ID: id}, f.updateTaskErr
+	}
+	k := taskFrom(id, in)
+	f.tasks[id] = k
+	return k, nil
+}
+
+func taskFrom(id int64, in client.TaskInput) client.Task {
+	return client.Task{
+		ID: id, Name: in.Name, Description: in.Description,
+		CaseID: in.CaseID, CaseNumber: in.CaseNumber,
+		Deadline: in.Deadline, NoteRequired: in.NoteRequired,
+		ImageRequired: in.ImageRequired, InvoiceMode: in.InvoiceMode,
+		PriceFixed: in.PriceFixed,
+	}
+}
+
+func (f *fakeInternal) CreateCase(_ context.Context, in client.NewCase) (client.CaseDetail, error) {
+	f.createCaseCalled = true
+	f.caseIn = in
+	if f.createCaseErr != nil {
+		// Kala allocated the case before the failure, so identity comes back
+		// with the error -- the shape CreateCase really returns.
+		return client.CaseDetail{Case: client.Case{ID: 4, Number: "KA-4"}}, f.createCaseErr
+	}
+	d := client.CaseDetail{Case: client.Case{
+		ID: 4, Number: "KA-4", Name: in.Name, Address: in.Address, Zip: in.Zip,
+		InternalProject: in.InternalProject, CustomerCompany: "Bag End Ltd",
+	}}
+	f.cases["KA-4"] = d
+	return d, nil
+}
+
+func (f *fakeInternal) SetCaseArchived(_ context.Context, caseNumber string, archived bool) error {
+	f.archivedCalls = append(f.archivedCalls, archived)
+	if f.archiveErr != nil {
+		return f.archiveErr
+	}
+	if d, ok := f.cases[caseNumber]; ok {
+		d.Archived = archived
+		f.cases[caseNumber] = d
+	}
+	return nil
+}
+
+func (f *fakeInternal) SetCaseCustomer(_ context.Context, caseNumber string, customerID int64, internal bool) error {
+	f.customerChanges = append(f.customerChanges, [2]any{customerID, internal})
+	return f.setCustomerErr
+}
+
+func (f *fakeInternal) SetCaseField(_ context.Context, caseNumber string, field client.CaseField, value string) error {
+	if f.caseFieldErr != nil {
+		return f.caseFieldErr
+	}
+	if f.fieldWrites == nil {
+		f.fieldWrites = map[client.CaseField]string{}
+	}
+	f.fieldWrites[field] = value
+	d := f.cases[caseNumber]
+	switch field {
+	case client.CaseFieldName:
+		d.Name = value
+	case client.CaseFieldAddress:
+		d.Address = value
+	case client.CaseFieldZip:
+		d.Zip = value
+	case client.CaseFieldContactPhone:
+		d.CustomerPhone = value
+	}
+	f.cases[caseNumber] = d
+	return nil
+}
+
+func (f *fakeInternal) ListTasks(_ context.Context, q client.TaskQuery) (client.TaskScan, error) {
+	if f.listTasksErr != nil {
+		return client.TaskScan{}, f.listTasksErr
+	}
+	scan := client.TaskScan{}
+	for _, k := range f.tasks {
+		if k.CaseID == q.CaseID || q.CaseID == 0 {
+			scan.Tasks = append(scan.Tasks, k)
+		}
+	}
+	scan.Total, scan.Fetched = len(scan.Tasks), len(scan.Tasks)
+	if f.truncateTasks {
+		scan.Total = scan.Fetched + 50
+	}
+	return scan, nil
 }
 
 var _ client.InternalClient = (*fakeInternal)(nil)

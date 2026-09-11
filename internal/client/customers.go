@@ -51,11 +51,15 @@ import (
 //
 // Customers are imported from e-conomic, which owns them. Nothing here writes.
 type Customer struct {
-	// ID and Number are BOTH carried as upstream sends them. The internal API
-	// spells Number as a string; webapiv2 spells it as an int, and the two are
-	// not known to hold the same value. Neither is derived from the other --
-	// the equivalent assumption for employees needed an experiment to relax,
-	// and no such experiment has been run for customers.
+	// ID and Number are BOTH carried as upstream sends them.
+	//
+	// Verified 2026-09-07 against tenant 17221: webapiv2's CustomersList and
+	// the internal GetCustomersPaged2 return IDENTICAL id and number for the
+	// same customer, and Number is a STRING on both. The earlier note here --
+	// that webapiv2 spelled it as an int and the equivalence was unverified --
+	// was wrong on both counts.
+	//
+	// Number is allocated by Kala, never chosen, so it cannot key an upsert.
 	ID     int64
 	Number string
 
@@ -70,6 +74,10 @@ type Customer struct {
 	City      string
 	EAN       string
 	CaseCount int
+
+	// Description is carried by both write bodies and by the read payload.
+	// It is NOT yet mapped in toDomain -- that is the GREEN step.
+	Description string
 }
 
 // CustomerQuery controls a customer list read.
@@ -110,36 +118,38 @@ func (s CustomerScan) Complete() bool { return s.Fetched >= s.Total }
 // Observed 2026-09-01 against the real API. Note number is a string on this
 // surface; webapiv2 sends an int for the same field name.
 type wireCustomer struct {
-	ID        int64  `json:"id"`
-	Number    string `json:"number"`
-	FirstName string `json:"firstName"`
-	LastName  string `json:"lastName"`
-	Company   string `json:"company"`
-	CVR       string `json:"cvr"`
-	Email     string `json:"email"`
-	Phone     string `json:"phone"`
-	Address   string `json:"address"`
-	Zip       string `json:"zip"`
-	City      string `json:"city"` // arrives as null in practice
-	EAN       string `json:"ean"`
-	CaseCount int    `json:"caseCount"`
+	ID          int64  `json:"id"`
+	Number      string `json:"number"`
+	FirstName   string `json:"firstName"`
+	LastName    string `json:"lastName"`
+	Company     string `json:"company"`
+	CVR         string `json:"cvr"`
+	Email       string `json:"email"`
+	Phone       string `json:"phone"`
+	Address     string `json:"address"`
+	Zip         string `json:"zip"`
+	City        string `json:"city"` // arrives as null in practice
+	EAN         string `json:"ean"`
+	CaseCount   int    `json:"caseCount"`
+	Description string `json:"description"`
 }
 
 func (w wireCustomer) toDomain() Customer {
 	return Customer{ //nolint:staticcheck // S1016: explicit mapping is intentional at the wire/domain boundary
-		ID:        w.ID,
-		Number:    w.Number,
-		FirstName: w.FirstName,
-		LastName:  w.LastName,
-		Company:   w.Company,
-		CVR:       w.CVR,
-		Email:     w.Email,
-		Phone:     w.Phone,
-		Address:   w.Address,
-		Zip:       w.Zip,
-		City:      w.City,
-		EAN:       w.EAN,
-		CaseCount: w.CaseCount,
+		ID:          w.ID,
+		Number:      w.Number,
+		FirstName:   w.FirstName,
+		LastName:    w.LastName,
+		Company:     w.Company,
+		CVR:         w.CVR,
+		Email:       w.Email,
+		Phone:       w.Phone,
+		Address:     w.Address,
+		Zip:         w.Zip,
+		City:        w.City,
+		EAN:         w.EAN,
+		CaseCount:   w.CaseCount,
+		Description: w.Description,
 	}
 }
 

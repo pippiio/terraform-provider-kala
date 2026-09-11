@@ -143,11 +143,67 @@ type InternalClient interface {
 	// ListCustomers reads customers, reporting how much of the account it covered.
 	ListCustomers(ctx context.Context, q CustomerQuery) (CustomerScan, error)
 
+	// AddCustomer creates a customer and returns it with the identity Kala
+	// allocated. Verified by read-back.
+	AddCustomer(ctx context.Context, in CustomerInput) (Customer, error)
+
+	// EditCustomer replaces a customer record. FULL-RECORD REPLACE: an omitted
+	// field is blanked upstream, so callers must read-modify-write.
+	EditCustomer(ctx context.Context, id int64, in CustomerInput) (Customer, error)
+
+	// GetCustomer reads one customer by id, selecting from a list read because
+	// Kala exposes no by-id endpoint. Absence from an INCOMPLETE read is
+	// reported as such, never as not-found.
+	GetCustomer(ctx context.Context, id int64) (Customer, error)
+
 	// ListCases reads one set of cases -- archived or not, per q.Archived.
 	ListCases(ctx context.Context, q CaseQuery) (CaseScan, error)
 
 	// GetCase reads one case by its string case number.
 	GetCase(ctx context.Context, caseNumber string) (CaseDetail, error)
+
+	// SetCaseField sets one field on a case and verifies it by read-back.
+	//
+	// Reads the case first: every setter carries the value it expects to
+	// replace and Kala validates it, so the previous value must be current
+	// rather than remembered. A mismatch is ErrConflict, not a retryable 5xx.
+	SetCaseField(ctx context.Context, caseNumber string, field CaseField, value string) error
+
+	// CreateCase creates a case and returns it with the identity Kala
+	// allocated. Always sends newCustomer:false -- see CreateCase.
+	CreateCase(ctx context.Context, in NewCase) (CaseDetail, error)
+
+	// SetCaseArchived archives or unarchives a case, verified by set
+	// membership because `archived` is not a response field.
+	SetCaseArchived(ctx context.Context, caseNumber string, archived bool) error
+
+	// SetCaseCustomer reassigns a case's customer, or converts it to an
+	// internal project. Always sends updateCustomerAddress:false.
+	SetCaseCustomer(ctx context.Context, caseNumber string, customerID int64, internalProject bool) error
+
+	// CreateTask creates a checklist item and returns it with the id Kala
+	// allocated. Verified by read-back.
+	CreateTask(ctx context.Context, in TaskInput) (Task, error)
+
+	// UpdateTask replaces a checklist item. FULL-RECORD REPLACE: an omitted
+	// field is blanked upstream, so callers must read-modify-write.
+	UpdateTask(ctx context.Context, cliID int64, in TaskInput) (Task, error)
+
+	// EnsureJobLink links a worker to a case and returns the link, whose ID is
+	// the jobLinkId SetJobLinkChecklist takes.
+	EnsureJobLink(ctx context.Context, caseID, workerNr int64) (JobLink, error)
+
+	// SetJobLinkChecklist REPLACES the set of items a job link covers.
+	SetJobLinkChecklist(ctx context.Context, jobLinkID int64, ids []int64) error
+
+	// RemoveJobLinkChecklistItem detaches one item from a worker's link. Needs
+	// no jobLinkId.
+	RemoveJobLinkChecklistItem(ctx context.Context, caseNumber string, checklistItemID, workerNr int64) error
+
+	// AssignedTaskIDs reports which of a case's items a worker is linked to.
+	// The read path is the task list, not a job-link endpoint -- Kala exposes
+	// no way to read a link directly.
+	AssignedTaskIDs(ctx context.Context, caseID, workerNr int64) ([]int64, error)
 
 	// ListTasks reads the checklist items of one case. q.CaseID is required.
 	ListTasks(ctx context.Context, q TaskQuery) (TaskScan, error)
@@ -465,9 +521,15 @@ func (c *internalAPI) authedRequest(
 }
 
 // wireStatusEnvelope is the failure shape the internal API returns WITH HTTP 200.
+//
+// Success is a *bool rather than a bool because ABSENT and FALSE mean opposite
+// things here. Almost every response omits the field entirely, and only an
+// explicit false is a refusal -- the same rule already applied to Status, where
+// only an explicit "Error" counts.
 type wireStatusEnvelope struct {
 	Status  string `json:"status"`
 	Message string `json:"message"`
+	Success *bool  `json:"success"`
 }
 
 // errorEnvelope turns Kala's in-body failure report into a real error.
@@ -479,10 +541,20 @@ type wireStatusEnvelope struct {
 // and only the read-back verification noticed something was wrong. That made a
 // precise, translated explanation from Kala surface as a generic mismatch.
 //
-// Successful writes answer either {"status":"Success"} or a small data object
-// with no status field at all, so only an explicit "Error" is treated as a
-// failure. Anything that does not decode as a JSON object — the Workers list is
-// an array — is passed through untouched.
+// Successful writes answer in FOUR shapes: {"status":"Success"}, a small data
+// object with no status field at all, a JSON array, and — OBSERVED 2026-09-08
+// on the case field-setters (RenameCase, ChangeCaseAddress, ChangeCaseZip,
+// RenameCaseCustomerPhoneNumber) — {"success":true,...}.
+//
+// That fourth shape is why `success` is checked here. Recognising only
+// {"status":"Error"} would let a {"success":false} refusal through as a
+// success, leaving read-back as the only thing that noticed — precisely the
+// defect this function was written to eliminate, arriving through a different
+// field name.
+//
+// Only an EXPLICIT negative is a failure in either field. Anything that does
+// not decode as a JSON object — the Workers list is an array — is passed
+// through untouched.
 func errorEnvelope(raw []byte, err error) error {
 	if err != nil {
 		return err
@@ -492,7 +564,10 @@ func errorEnvelope(raw []byte, err error) error {
 	if json.Unmarshal(raw, &env) != nil {
 		return nil
 	}
-	if !strings.EqualFold(env.Status, "Error") {
+
+	refused := strings.EqualFold(env.Status, "Error") ||
+		(env.Success != nil && !*env.Success)
+	if !refused {
 		return nil
 	}
 

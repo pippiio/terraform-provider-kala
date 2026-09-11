@@ -23,7 +23,7 @@
 //
 // Dependencies: client.InternalClient (ListCases, GetCase).
 // Side effects: none. CreateCase and ArchiveCase exist upstream and are not
-//               called; neither is on the permitted-write list.
+//               called; neither is on the internal API's permitted-write list.
 
 package provider
 
@@ -88,7 +88,7 @@ func caseAttributes() map[string]schema.Attribute {
 		"address":          schema.StringAttribute{Computed: true, MarkdownDescription: "Site address."},
 		"zip":              schema.StringAttribute{Computed: true, MarkdownDescription: "Postal code."},
 		"sub_text":         schema.StringAttribute{Computed: true, MarkdownDescription: "Secondary descriptive line."},
-		"customer_name":    schema.StringAttribute{Computed: true, MarkdownDescription: "Customer contact name, denormalised onto the case."},
+		"customer_name":    schema.StringAttribute{Computed: true, MarkdownDescription: "Contact name for **this case** — the person to call about this job. Despite the attribute name this is the CASE's own contact, not a copy of the customer's record: changing it does not touch `kala_customer` (verified 2026-09-08)."},
 		"customer_company": schema.StringAttribute{Computed: true, MarkdownDescription: "Customer company name."},
 		"internal_project": schema.BoolAttribute{Computed: true, MarkdownDescription: "Whether this is an internal project rather than customer work. Internal projects have no customer."},
 		"restricted":       schema.BoolAttribute{Computed: true, MarkdownDescription: "Whether access to the case is restricted."},
@@ -146,9 +146,13 @@ func (d *casesDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, 
 				MarkdownDescription: "Return only cases whose customer company matches exactly, " +
 					"ignoring case.\n\n" +
 					"**Applied client-side.** The case list carries the customer's company as text " +
-					"but no customer id, so this is string matching rather than a join: it will not " +
-					"follow a renamed company, and two customers sharing a company name are " +
-					"indistinguishable here. Use `kala_customer` when you need the id.\n\n" +
+					"but no customer id, so this is string matching rather than a join, and two " +
+					"customers sharing a company name are indistinguishable here. Use " +
+					"`kala_customer` when you need the id.\n\n" +
+					"Renaming a customer DOES cascade to its cases (verified 2026-09-09), so the " +
+					"text stays consistent with the customer record. The hazard is a **hardcoded** " +
+					"value: after a rename it silently matches nothing. Derive it from " +
+					"`kala_customer.company` rather than writing the name literally.\n\n" +
 					"Deliberately not pushed into `search`, which is a broad text match over case " +
 					"names as well as customer fields, so narrowing with it could drop cases that " +
 					"genuinely match.\n\n" +
