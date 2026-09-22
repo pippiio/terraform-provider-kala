@@ -9,7 +9,7 @@
 terraform {
   required_providers {
     kala = {
-      source = "registry.terraform.io/techchapter/kala"
+      source = "registry.terraform.io/pippiio/kala"
     }
   }
 }

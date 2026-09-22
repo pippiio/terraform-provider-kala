@@ -1,4 +1,4 @@
-module github.com/techchapter/terraform-provider-kala
+module github.com/pippiio/terraform-provider-kala
 
 go 1.25.13
 

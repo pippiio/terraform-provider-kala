@@ -7,7 +7,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 
-	"github.com/techchapter/terraform-provider-kala/internal/provider"
+	"github.com/pippiio/terraform-provider-kala/internal/provider"
 )
 
 // version is overridden at release time via -ldflags.
@@ -19,7 +19,7 @@ func main() {
 	flag.Parse()
 
 	err := providerserver.Serve(context.Background(), provider.New(version), providerserver.ServeOpts{
-		Address: "registry.terraform.io/techchapter/kala",
+		Address: "registry.terraform.io/pippiio/kala",
 		Debug:   debug,
 	})
 	if err != nil {

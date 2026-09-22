@@ -1,6 +1,6 @@
 package provider
 
-import "github.com/techchapter/terraform-provider-kala/internal/client"
+import "github.com/pippiio/terraform-provider-kala/internal/client"
 
 // providerClients carries both Kala API clients to resources and data sources.
 //

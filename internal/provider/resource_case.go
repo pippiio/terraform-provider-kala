@@ -41,7 +41,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
-	"github.com/techchapter/terraform-provider-kala/internal/client"
+	"github.com/pippiio/terraform-provider-kala/internal/client"
 )
 
 func NewCaseResource() resource.Resource { return &caseResource{} }

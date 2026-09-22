@@ -11,7 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
-	"github.com/techchapter/terraform-provider-kala/internal/client"
+	"github.com/pippiio/terraform-provider-kala/internal/client"
 )
 
 func sampleCustomers() []client.Customer {

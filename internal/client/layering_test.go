@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/techchapter/terraform-provider-kala/internal/client"
+	"github.com/pippiio/terraform-provider-kala/internal/client"
 )
 
 // parseGoFiles parses every .go file in the current directory.
