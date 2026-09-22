@@ -55,7 +55,7 @@ fmt-check:
 install-mirror: build
 	@VERSION=$${VERSION:-0.0.0-dev}; \
 	PLATFORM=$$(go env GOOS)_$$(go env GOARCH); \
-	DEST=$$HOME/.terraform.d/plugins/registry.terraform.io/techchapter/kala/$$VERSION/$$PLATFORM; \
+	DEST=$$HOME/.terraform.d/plugins/registry.terraform.io/pippiio/kala/$$VERSION/$$PLATFORM; \
 	mkdir -p $$DEST; \
 	cp $(BINARY) $$DEST/$(BINARY)_v$$VERSION; \
 	echo "installed $$DEST/$(BINARY)_v$$VERSION"

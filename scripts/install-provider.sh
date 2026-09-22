@@ -15,9 +15,9 @@
 set -euo pipefail
 
 readonly HOSTNAME_="registry.terraform.io"
-readonly NAMESPACE="techchapter"
+readonly NAMESPACE="pippiio"
 readonly TYPE="kala"
-readonly REPO="techchapter/terraform-provider-kala"
+readonly REPO="pippiio/terraform-provider-kala"
 readonly BINARY="terraform-provider-${TYPE}"
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }

@@ -12,7 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
-	"github.com/techchapter/terraform-provider-kala/internal/client"
+	"github.com/pippiio/terraform-provider-kala/internal/client"
 )
 
 func newCaseResource(fi *fakeInternal) *caseResource {

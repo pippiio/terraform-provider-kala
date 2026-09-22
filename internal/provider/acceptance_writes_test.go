@@ -10,7 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 
-	"github.com/techchapter/terraform-provider-kala/internal/client"
+	"github.com/pippiio/terraform-provider-kala/internal/client"
 )
 
 // Acceptance tests for the customer, case, task, and assignment resources.

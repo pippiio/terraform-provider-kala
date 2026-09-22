@@ -32,10 +32,10 @@ binary on disk is not enough on its own:
 provider_installation {
   filesystem_mirror {
     path    = "/Users/you/.terraform.d/plugins"
-    include = ["registry.terraform.io/techchapter/*"]
+    include = ["registry.terraform.io/pippiio/*"]
   }
   direct {
-    exclude = ["registry.terraform.io/techchapter/*"]
+    exclude = ["registry.terraform.io/pippiio/*"]
   }
 }
 ```
@@ -44,7 +44,7 @@ provider_installation {
 terraform {
   required_providers {
     kala = {
-      source  = "registry.terraform.io/techchapter/kala"
+      source  = "registry.terraform.io/pippiio/kala"
       version = "0.1.0"
     }
   }
@@ -418,7 +418,7 @@ To work against a locally built binary, use a dev override:
 # ~/.terraformrc
 provider_installation {
   dev_overrides {
-    "registry.terraform.io/techchapter/kala" = "/Users/you/go/bin"
+    "registry.terraform.io/pippiio/kala" = "/Users/you/go/bin"
   }
   direct {}
 }

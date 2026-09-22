@@ -18,7 +18,7 @@ covers the ways round that, and which one to pick.
 terraform {
   required_providers {
     kala = {
-      source  = "github.com/techchapter/terraform-provider-kala"  # does NOT work
+      source  = "github.com/pippiio/terraform-provider-kala"  # does NOT work
       version = "0.1.0"
     }
   }
@@ -36,7 +36,7 @@ the same `source` string and change only where Terraform looks for the bytes.
 Throughout, this provider's address is:
 
 ```
-registry.terraform.io/techchapter/kala
+registry.terraform.io/pippiio/kala
 ```
 
 Using `registry.terraform.io` as the hostname is deliberate even though nothing
@@ -56,7 +56,7 @@ platform. Put the binary there and `terraform init` finds it offline.
 ```
 ~/.terraform.d/plugins/
 └── registry.terraform.io/
-    └── techchapter/
+    └── pippiio/
         └── kala/
             └── 0.1.0/
                 └── darwin_arm64/
@@ -88,7 +88,7 @@ nothing is published there:
 ```
 Error: Failed to query available provider packages
   provider registry registry.terraform.io does not have a provider named
-  registry.terraform.io/techchapter/kala
+  registry.terraform.io/pippiio/kala
 ```
 
 A `provider_installation` block is what stops that fall-through. Create
@@ -98,10 +98,10 @@ A `provider_installation` block is what stops that fall-through. Create
 provider_installation {
   filesystem_mirror {
     path    = "/Users/you/.terraform.d/plugins"
-    include = ["registry.terraform.io/techchapter/*"]
+    include = ["registry.terraform.io/pippiio/*"]
   }
   direct {
-    exclude = ["registry.terraform.io/techchapter/*"]
+    exclude = ["registry.terraform.io/pippiio/*"]
   }
 }
 ```
@@ -116,7 +116,7 @@ Then:
 terraform {
   required_providers {
     kala = {
-      source  = "registry.terraform.io/techchapter/kala"
+      source  = "registry.terraform.io/pippiio/kala"
       version = "0.1.0"
     }
   }
@@ -125,7 +125,7 @@ terraform {
 
 ```console
 $ terraform init
-- Installed techchapter/kala v0.1.0 (unauthenticated)
+- Installed pippiio/kala v0.1.0 (unauthenticated)
 ```
 
 `unauthenticated` is expected: it means the artifact carries no registry
@@ -172,10 +172,10 @@ Upload `./mirror`, then point consumers at it:
 provider_installation {
   network_mirror {
     url     = "https://tf-mirror.internal.example.com/"
-    include = ["registry.terraform.io/techchapter/*"]
+    include = ["registry.terraform.io/pippiio/*"]
   }
   direct {
-    exclude = ["registry.terraform.io/techchapter/*"]
+    exclude = ["registry.terraform.io/pippiio/*"]
   }
 }
 ```
@@ -200,7 +200,7 @@ private registry all support it.
 terraform {
   required_providers {
     kala = {
-      source  = "tf.example.com/techchapter/kala"
+      source  = "tf.example.com/pippiio/kala"
       version = "~> 0.1"
     }
   }
@@ -224,7 +224,7 @@ For working on the provider itself, skip packaging entirely:
 # ~/.terraformrc
 provider_installation {
   dev_overrides {
-    "registry.terraform.io/techchapter/kala" = "/Users/you/go/bin"
+    "registry.terraform.io/pippiio/kala" = "/Users/you/go/bin"
   }
   direct {}
 }
