@@ -7,7 +7,7 @@ version: 2
 # consumers use a filesystem or network mirror today, and lets the provider move
 # to a registry later without changing how it is packaged.
 #
-# See docs/private-distribution.md for how consumers install these artifacts.
+# See docs/releasing.md for how releases are built, signed, and verified.
 
 before:
   hooks:
@@ -66,6 +66,14 @@ archives:
 checksum:
   name_template: '{{ .ProjectName }}_{{ .Version }}_SHA256SUMS'
   algorithm: sha256
+  # The registry reads protocol support from the manifest, and verifies it
+  # against SHA256SUMS like any other artifact — so it has to be checksummed
+  # here, not just attached to the release. Listing it in only one of the two
+  # places is the usual way this fails: the file ships unverifiable, or it is
+  # checksummed but never uploaded.
+  extra_files:
+    - glob: 'terraform-registry-manifest.json'
+      name_template: '{{ .ProjectName }}_{{ .Version }}_manifest.json'
 
 signs:
   # Detached signature over the checksum file. Required by the public registry;
@@ -90,6 +98,12 @@ release:
   draft: true
   prerelease: auto
   name_template: 'v{{ .Version }}'
+  # Attach the manifest under the name the registry protocol expects. The
+  # repository-root filename is fixed, the release asset name is versioned, so
+  # the rename happens here rather than in the working tree.
+  extra_files:
+    - glob: 'terraform-registry-manifest.json'
+      name_template: '{{ .ProjectName }}_{{ .Version }}_manifest.json'
 
 changelog:
   use: github

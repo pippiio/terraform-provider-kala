@@ -54,9 +54,14 @@ terraform {
 Without the `provider_installation` block, `terraform init` still asks the public
 registry and fails — `~/.terraform.d/plugins` alone does not override that.
 
-See **[docs/private-distribution.md](docs/private-distribution.md)** for why a
-`source` pointing at GitHub cannot work, and the alternatives (network mirror,
-private registry) for when a filesystem mirror stops scaling.
+A `source` pointing at GitHub cannot work: `source` is a registry address, not a
+URL, so Terraform resolves it against a registry rather than fetching the
+repository. The mirror above is what stands in until this provider is published
+to the public registry, after which `source` alone is enough and the
+`provider_installation` block can go.
+
+See **[docs/releasing.md](docs/releasing.md)** for how a release is built,
+signed, and verified.
 
 ## Configuration
 
@@ -438,4 +443,4 @@ tag can point at any commit, including one that never passed CI — then builds
 every platform and creates a **draft** GitHub Release for a human to publish.
 
 Signing is optional; configure `GPG_PRIVATE_KEY` and `GPG_PASSPHRASE` to enable
-it. See [docs/private-distribution.md](docs/private-distribution.md#cutting-a-release).
+it. See [docs/releasing.md](docs/releasing.md#cutting-a-release).

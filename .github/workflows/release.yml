@@ -1,7 +1,7 @@
 name: Release
 
 # Tags must match v[0-9]* to satisfy the repository's tag-naming ruleset, and
-# tag creation is itself restricted — see docs/private-distribution.md.
+# tag creation is itself restricted — see docs/releasing.md.
 on:
   push:
     tags:
@@ -97,4 +97,4 @@ jobs:
           echo "carries no detached signature. Consumers can verify artifact" >> "$GITHUB_STEP_SUMMARY"
           echo "integrity from \`SHA256SUMS\`, but not provenance." >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "See \`docs/private-distribution.md\` to enable signing." >> "$GITHUB_STEP_SUMMARY"
+          echo "See \`docs/releasing.md\` to enable signing." >> "$GITHUB_STEP_SUMMARY"

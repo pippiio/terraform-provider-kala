@@ -4,7 +4,7 @@
 # filesystem mirror, so `terraform init` can resolve it without a registry.
 #
 # Terraform cannot fetch providers from a private repository — see
-# docs/private-distribution.md for why, and for the alternatives.
+# README.md for why, and docs/releasing.md for how releases are produced.
 #
 # Usage:
 #   ./scripts/install-provider.sh v0.1.0
@@ -135,7 +135,7 @@ Refusing to install. Re-download, and treat a repeat mismatch as a compromised r
   info "Checksum OK."
 
   # Provenance, when the release was signed. Absence is not an error: signing is
-  # optional (see docs/private-distribution.md).
+  # optional (see docs/releasing.md).
   if gh release download "$TAG" --repo "$REPO" --pattern "${SUMS}.sig" --dir "$TMP" 2>/dev/null; then
     if command -v gpg >/dev/null 2>&1; then
       if gpg --verify "${TMP}/${SUMS}.sig" "${TMP}/${SUMS}" >/dev/null 2>&1; then
