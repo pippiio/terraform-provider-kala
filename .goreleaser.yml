@@ -7,7 +7,7 @@ version: 2
 # consumers use a filesystem or network mirror today, and lets the provider move
 # to a registry later without changing how it is packaged.
 #
-# See docs/private-distribution.md for how consumers install these artifacts.
+# See docs/releasing.md for how releases are built, signed, and verified.
 
 before:
   hooks:
