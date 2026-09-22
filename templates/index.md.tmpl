@@ -10,11 +10,17 @@ description: |-
 
 ## Credentials
 
-Kala is two APIs. The documented `webapiv2` (`api_key`) covers employee reads.
-The app's internal API (`username`/`password`) owns employee lifecycle and is the
-**only** source of customers, cases, and tasks — so every data source except
-`kala_employees` needs `KALA_USERNAME` and `KALA_PASSWORD`. That API is
-undocumented and unversioned, and may change without notice.
+Kala is two APIs, and neither credential is required by the other's half of the
+provider. The documented `webapiv2` (`api_key`) backs exactly one thing, the
+`kala_employees` data source. The app's internal API (`username`/`password`) owns
+employee lifecycle and is the **only** source of customers, cases, and tasks, so
+it backs every resource and every other data source. That API is undocumented and
+unversioned, and may change without notice.
+
+Supply whichever you need: `api_key` alone, `username`/`password` alone, or both.
+The provider fails configuration only when you supply neither — or when you
+supply one half of the `username`/`password` pair. Anything you then use without
+its credential says so by name.
 
 {{ if .HasExample -}}
 ## Example Usage

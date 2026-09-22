@@ -149,6 +149,8 @@ func newFakeInternal(workers ...client.Worker) *fakeInternal {
 	return &fakeInternal{workers: m, customers: map[int64]client.Customer{}, customerID: 4, cases: map[string]client.CaseDetail{}, tasks: map[int64]client.Task{}}
 }
 
+func (f *fakeInternal) Ping(context.Context) error { return nil }
+
 func (f *fakeInternal) ListWorkers(context.Context) ([]client.Worker, error) {
 	if f.listWorkerErr != nil {
 		return nil, f.listWorkerErr

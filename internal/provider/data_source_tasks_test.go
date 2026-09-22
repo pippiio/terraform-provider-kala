@@ -22,6 +22,8 @@ type taskFake struct {
 	got  client.TaskQuery
 }
 
+func (f *taskFake) Ping(context.Context) error { return nil }
+
 func (f *taskFake) ListTasks(_ context.Context, q client.TaskQuery) (client.TaskScan, error) {
 	f.got = q
 	return f.scan, f.err

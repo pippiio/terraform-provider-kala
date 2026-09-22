@@ -10,17 +10,24 @@ Manages configuration in [Kala](https://kala.app), a Danish work-management plat
 
 ## Credentials
 
-Kala is two APIs. The documented `webapiv2` (`api_key`) covers employee reads.
-The app's internal API (`username`/`password`) owns employee lifecycle and is the
-**only** source of customers, cases, and tasks — so every data source except
-`kala_employees` needs `KALA_USERNAME` and `KALA_PASSWORD`. That API is
-undocumented and unversioned, and may change without notice.
+Kala is two APIs, and neither credential is required by the other's half of the
+provider. The documented `webapiv2` (`api_key`) backs exactly one thing, the
+`kala_employees` data source. The app's internal API (`username`/`password`) owns
+employee lifecycle and is the **only** source of customers, cases, and tasks, so
+it backs every resource and every other data source. That API is undocumented and
+unversioned, and may change without notice.
+
+Supply whichever you need: `api_key` alone, `username`/`password` alone, or both.
+The provider fails configuration only when you supply neither — or when you
+supply one half of the `username`/`password` pair. Anything you then use without
+its credential says so by name.
 
 ## Example Usage
 
 ```terraform
 # Kala is two APIs, and which one a data source or resource uses decides which
-# credentials it needs.
+# credentials it needs. Set whichever you actually use — either alone is enough,
+# and the provider only objects if you supply neither.
 #
 #   export KALA_API_KEY=...    # webapiv2 — kala_employees only
 #   export KALA_USERNAME=...   # internal app API — the kala_employee resource,
@@ -48,7 +55,9 @@ provider "kala" {
   #
   # Terraform configures the provider for `validate` and `plan` as well as
   # `apply`, so the credential check needs network reachability every time. Set
-  # this in jobs that only validate configuration and hold no credentials.
+  # this in jobs that only validate configuration and hold no credentials: it
+  # skips the check for both APIs, and lets the provider configure with no
+  # credentials at all.
   #
   # skip_credential_validation = true
 }
@@ -59,16 +68,16 @@ provider "kala" {
 
 ### Optional
 
-- `api_key` (String, Sensitive) API key for the Kala webapiv2 API. May also be set via the `KALA_API_KEY` environment variable, which is preferred so the credential stays out of version control.
+- `api_key` (String, Sensitive) API key for the Kala webapiv2 API. Required only by the `kala_employees` data source, the provider's one consumer of webapiv2; everything else uses `username`/`password`. May also be set via the `KALA_API_KEY` environment variable, which is preferred so the credential stays out of version control.
 - `company` (Number) Kala company identifier. May also be set via `KALA_COMPANY`.
 
 A Kala login can belong to several companies, and this chooses which one the provider acts on — including which company's employees are created and deactivated. It may be omitted when the login belongs to exactly one; when it belongs to several, the provider refuses to guess and asks for this rather than writing to whichever Kala happens to list first.
 - `endpoint` (String) Base URL of the Kala webapiv2 API. Defaults to `https://app.kala.dk/webapiv2`. May also be set via `KALA_ENDPOINT`.
 - `max_retries` (Number) Maximum retries for transient failures. Only 5xx and transport errors are retried; 4xx never is. Defaults to 3.
-- `password` (String, Sensitive) Password for Kala's internal app API. May also be set via `KALA_PASSWORD`, which is preferred so the credential stays out of version control.
-- `skip_credential_validation` (Boolean) Skip the credential check performed during provider configuration. Terraform runs provider configuration for `validate` and `plan` as well as `apply`, so the default check requires network reachability for every command. Set this to `true` in credential-less CI jobs that only validate configuration. Defaults to `false`.
+- `password` (String, Sensitive) Password for Kala's internal app API. Must be set together with `username`. May also be set via `KALA_PASSWORD`, which is preferred so the credential stays out of version control.
+- `skip_credential_validation` (Boolean) Skip the credential check performed during provider configuration. Terraform runs provider configuration for `validate` and `plan` as well as `apply`, so the default check requires network reachability for every command. Set this to `true` in credential-less CI jobs that only validate configuration: it skips the check for both APIs, and also lifts the requirement to supply any credential at all. Defaults to `false`.
 - `timeout_seconds` (Number) Per-request timeout in seconds. Defaults to 30.
-- `username` (String) Username for Kala's internal app API. Required only for resources that manage employee lifecycle (creation and activation), which webapiv2 does not expose. May also be set via `KALA_USERNAME`.
+- `username` (String) Username for Kala's internal app API. Required by every resource and by every data source except `kala_employees`: the internal API owns employee lifecycle, which webapiv2 does not expose, and is the only source of customers, cases, and tasks. Must be set together with `password`. May also be set via `KALA_USERNAME`.
 
 ## Limitations
 

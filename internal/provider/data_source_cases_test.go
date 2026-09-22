@@ -25,6 +25,8 @@ type caseFake struct {
 	gotNr    string
 }
 
+func (f *caseFake) Ping(context.Context) error { return nil }
+
 func (f *caseFake) ListCases(_ context.Context, q client.CaseQuery) (client.CaseScan, error) {
 	f.gotQuery = q
 	return f.scan, f.scanErr

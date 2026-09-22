@@ -88,6 +88,16 @@ type Worker struct {
 // InternalClient is the session-authenticated read surface plus the single
 // permitted write.
 type InternalClient interface {
+	// Ping verifies username/password by performing the sign-in handshake and
+	// nothing else. It returns an error satisfying errors.Is(err,
+	// ErrUnauthorized) when Kala rejects the credentials.
+	//
+	// Provider configuration runs for validate and plan as well as apply, so
+	// this deliberately reads no data: the session it establishes is cached, so
+	// validating costs one handshake that the first real call would have paid
+	// anyway.
+	Ping(ctx context.Context) error
+
 	// ListWorkers returns all workers visible to the authenticated session.
 	ListWorkers(ctx context.Context) ([]Worker, error)
 
@@ -424,6 +434,12 @@ var _ InternalClient = (*internalAPI)(nil)
 // rather than at construction, so building a client never performs I/O.
 func NewInternal(cfg InternalConfig) InternalClient {
 	return &internalAPI{cfg: cfg.withDefaults()}
+}
+
+// Ping establishes the session, which is the whole of the credential check.
+func (c *internalAPI) Ping(ctx context.Context) error {
+	_, _, err := c.session(ctx)
+	return err
 }
 
 // session returns a valid kauthtoken, performing the two-step handshake once.
