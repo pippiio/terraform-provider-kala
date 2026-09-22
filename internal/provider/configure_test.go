@@ -185,8 +185,13 @@ func TestConfigure_SkipValidationMakesNoRequest(t *testing.T) {
 	}
 }
 
-func TestConfigure_MissingAPIKeyNamesBothSources(t *testing.T) {
+// With no credential of either kind the provider can do nothing, so it must
+// fail — naming every source, since either credential set is now sufficient on
+// its own for the resources that use it.
+func TestConfigure_MissingAllCredentialsNamesEverySource(t *testing.T) {
 	t.Setenv("KALA_API_KEY", "")
+	t.Setenv("KALA_USERNAME", "")
+	t.Setenv("KALA_PASSWORD", "")
 
 	resp := configureProvider(t, cfgOverrides{endpoint: "https://example.test"})
 
@@ -194,8 +199,84 @@ func TestConfigure_MissingAPIKeyNamesBothSources(t *testing.T) {
 		t.Fatal("want an error when no credential is available")
 	}
 	text := diagText(resp.Diagnostics)
-	if !strings.Contains(text, "KALA_API_KEY") || !strings.Contains(text, "api_key") {
-		t.Errorf("diagnostic must name both the attribute and the env var, got: %s", text)
+	for _, want := range []string{"api_key", "KALA_API_KEY", "username", "KALA_USERNAME", "password", "KALA_PASSWORD"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("diagnostic must name %s, got: %s", want, text)
+		}
+	}
+}
+
+// api_key backs exactly one data source. Requiring it from someone who only
+// manages cases, customers and tasks forces them to obtain a credential the
+// provider will never send.
+func TestConfigure_SucceedsWithoutAPIKeyWhenInternalCredentialsAreSet(t *testing.T) {
+	t.Setenv("KALA_API_KEY", "")
+
+	skip := true
+	resp := configureProvider(t, cfgOverrides{
+		endpoint: "https://example.test",
+		username: "user@example.com",
+		password: "hunter2",
+		skip:     &skip,
+	})
+
+	if hasError(resp.Diagnostics) {
+		t.Fatalf("username/password alone must configure the provider: %s", diagText(resp.Diagnostics))
+	}
+}
+
+// skip_credential_validation documents itself as the switch for credential-less
+// CI jobs that only run terraform validate. That is only true if it also lifts
+// the requirement to supply a credential at all.
+func TestConfigure_SkipValidationAllowsNoCredentialsAtAll(t *testing.T) {
+	t.Setenv("KALA_API_KEY", "")
+	t.Setenv("KALA_USERNAME", "")
+	t.Setenv("KALA_PASSWORD", "")
+
+	skip := true
+	resp := configureProvider(t, cfgOverrides{skip: &skip})
+
+	if hasError(resp.Diagnostics) {
+		t.Fatalf("a credential-less validate run must configure cleanly: %s", diagText(resp.Diagnostics))
+	}
+}
+
+// With api_key present the provider is usable, so half an internal pair is a
+// warning rather than an error — but it must still be said, or employee
+// lifecycle resources fail later with no hint that a typo caused it.
+func TestConfigure_HalfAnInternalPairWarnsWhenAPIKeyCarriesTheRun(t *testing.T) {
+	t.Setenv("KALA_PASSWORD", "")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"pong":"pong"}`))
+	}))
+	defer srv.Close()
+
+	resp := configureProvider(t, cfgOverrides{
+		endpoint: srv.URL,
+		apiKey:   "valid-key",
+		username: "user@example.com",
+	})
+
+	if hasError(resp.Diagnostics) {
+		t.Fatalf("api_key alone must still configure the provider: %s", diagText(resp.Diagnostics))
+	}
+	if !strings.Contains(diagText(resp.Diagnostics), "Incomplete Kala internal API credentials") {
+		t.Errorf("want a warning about the incomplete pair, got: %s", diagText(resp.Diagnostics))
+	}
+}
+
+// Supplying only one half of the internal pair is a mistake, not an opt-out —
+// but it must not be mistaken for "no internal credentials" and silently
+// swallowed when it is the only credential offered.
+func TestConfigure_UsernameWithoutPasswordIsNotACredential(t *testing.T) {
+	t.Setenv("KALA_API_KEY", "")
+	t.Setenv("KALA_PASSWORD", "")
+
+	resp := configureProvider(t, cfgOverrides{endpoint: "https://example.test", username: "user@example.com"})
+
+	if !hasError(resp.Diagnostics) {
+		t.Fatalf("want an error: half a credential pair is not a credential, got: %s", diagText(resp.Diagnostics))
 	}
 }
 

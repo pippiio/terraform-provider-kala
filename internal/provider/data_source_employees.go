@@ -22,7 +22,7 @@ func NewEmployeesDataSource() datasource.DataSource {
 }
 
 type employeesDataSource struct {
-	client client.Client
+	clients *providerClients
 }
 
 type employeesDataSourceModel struct {
@@ -111,15 +111,12 @@ func (d *employeesDataSource) Configure(_ context.Context, req datasource.Config
 		)
 		return
 	}
-	d.client = c.Web
+	d.clients = c
 }
 
 func (d *employeesDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
-	if d.client == nil {
-		resp.Diagnostics.AddError(
-			"Kala client not configured",
-			"The provider was not configured before this data source was read. This is a bug in the provider.",
-		)
+	web, ok := d.clients.requireWeb(&resp.Diagnostics)
+	if !ok {
 		return
 	}
 
@@ -129,7 +126,7 @@ func (d *employeesDataSource) Read(ctx context.Context, req datasource.ReadReque
 		return
 	}
 
-	employees, err := d.client.ListEmployees(ctx, client.ListOptions{
+	employees, err := web.ListEmployees(ctx, client.ListOptions{
 		PageSize: int(config.PageSize.ValueInt64()),
 	})
 	if err != nil {

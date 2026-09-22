@@ -65,7 +65,9 @@ func (p *kalaProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp 
 			"api_key": schema.StringAttribute{
 				Optional:  true,
 				Sensitive: true, // keeps the credential out of plan output
-				MarkdownDescription: "API key for the Kala webapiv2 API. May also be set via the `KALA_API_KEY` " +
+				MarkdownDescription: "API key for the Kala webapiv2 API. Required only by the " +
+					"`kala_employees` data source, the provider's one consumer of webapiv2; everything " +
+					"else uses `username`/`password`. May also be set via the `KALA_API_KEY` " +
 					"environment variable, which is preferred so the credential stays out of version control.",
 			},
 			"company": schema.Int64Attribute{
@@ -87,22 +89,26 @@ func (p *kalaProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp 
 			},
 			"username": schema.StringAttribute{
 				Optional: true,
-				MarkdownDescription: "Username for Kala's internal app API. Required only for resources that " +
-					"manage employee lifecycle (creation and activation), which webapiv2 does not expose. " +
+				MarkdownDescription: "Username for Kala's internal app API. Required by every resource " +
+					"and by every data source except `kala_employees`: the internal API owns employee " +
+					"lifecycle, which webapiv2 does not expose, and is the only source of customers, " +
+					"cases, and tasks. Must be set together with `password`. " +
 					"May also be set via `KALA_USERNAME`.",
 			},
 			"password": schema.StringAttribute{
 				Optional:  true,
 				Sensitive: true,
-				MarkdownDescription: "Password for Kala's internal app API. May also be set via " +
-					"`KALA_PASSWORD`, which is preferred so the credential stays out of version control.",
+				MarkdownDescription: "Password for Kala's internal app API. Must be set together with " +
+					"`username`. May also be set via `KALA_PASSWORD`, which is preferred so the " +
+					"credential stays out of version control.",
 			},
 			"skip_credential_validation": schema.BoolAttribute{
 				Optional: true,
 				MarkdownDescription: "Skip the credential check performed during provider configuration. " +
 					"Terraform runs provider configuration for `validate` and `plan` as well as `apply`, so the " +
 					"default check requires network reachability for every command. Set this to `true` in " +
-					"credential-less CI jobs that only validate configuration. Defaults to `false`.",
+					"credential-less CI jobs that only validate configuration: it skips the check for both " +
+					"APIs, and also lifts the requirement to supply any credential at all. Defaults to `false`.",
 			},
 		},
 	}
@@ -134,12 +140,38 @@ func (p *kalaProvider) Configure(ctx context.Context, req provider.ConfigureRequ
 		return
 	}
 
-	apiKey, err := resolveCredential(config.APIKey.ValueString(), "KALA_API_KEY")
-	if err != nil {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("api_key"),
-			"Missing Kala API key",
-			err.Error(),
+	// api_key is optional. It backs exactly one data source — kala_employees —
+	// so requiring it from someone who only manages cases, customers and tasks
+	// would force them to obtain a credential the provider never sends.
+	apiKey, apiKeyErr := resolveCredential(config.APIKey.ValueString(), "KALA_API_KEY")
+
+	// The internal API is likewise optional, and needs both halves: one without
+	// the other is a configuration mistake rather than an opt-out.
+	username, userErr := resolveCredential(config.Username.ValueString(), "KALA_USERNAME")
+	password, passErr := resolveCredential(config.Password.ValueString(), "KALA_PASSWORD")
+
+	hasWeb := apiKeyErr == nil
+	hasInternal := userErr == nil && passErr == nil
+	skipValidation := config.SkipCredentialValidation.ValueBool()
+
+	// With neither credential the provider can serve nothing, so say so once and
+	// name every source rather than singling out api_key.
+	//
+	// skip_credential_validation lifts this too: it advertises itself as the
+	// switch for credential-less CI jobs that only run terraform validate, and
+	// that is only true if a run with no credentials at all can configure.
+	if !hasWeb && !hasInternal && !skipValidation {
+		resp.Diagnostics.AddError(
+			"No Kala credentials configured",
+			"The provider needs at least one credential, and which one depends on what you "+
+				"manage.\n\n"+
+				"Set api_key, or export KALA_API_KEY: required only by the kala_employees data "+
+				"source.\n\n"+
+				"Set username and password, or export KALA_USERNAME and KALA_PASSWORD: required "+
+				"by every other data source and by every resource.\n\n"+
+				"Prefer the environment variables so credentials stay out of version control. "+
+				"Set skip_credential_validation = true to configure with no credentials at all, "+
+				"for a CI job that only runs terraform validate.",
 		)
 		return
 	}
@@ -179,39 +211,15 @@ func (p *kalaProvider) Configure(ctx context.Context, req provider.ConfigureRequ
 		cfg.MaxRetries = 3
 	}
 
-	c := client.New(cfg)
+	clients := &providerClients{}
 
-	// Fail fast on bad credentials — but only when asked to.
-	//
-	// Terraform invokes Configure for validate and plan as well as apply, so an
-	// unconditional check makes every command require network reachability and
-	// breaks credential-less CI jobs that only validate. This mirrors the AWS
-	// provider's skip_credentials_validation.
-	if !config.SkipCredentialValidation.ValueBool() {
-		if err := c.Ping(ctx); err != nil {
-			resp.Diagnostics.AddAttributeError(
-				path.Root("api_key"),
-				"Could not authenticate against Kala",
-				"The Kala API rejected the supplied credentials or was unreachable.\n\n"+
-					"Error: "+err.Error()+"\n\n"+
-					"Set skip_credential_validation = true to bypass this check, for example in a "+
-					"credential-less CI job that only runs terraform validate.",
-			)
-			return
-		}
-		tflog.Debug(ctx, "Kala credentials validated")
+	if hasWeb {
+		clients.Web = client.New(cfg)
 	} else {
-		tflog.Debug(ctx, "Skipping Kala credential validation at user request")
+		tflog.Debug(ctx, "webapiv2 not configured; the kala_employees data source is unavailable")
 	}
 
-	clients := &providerClients{Web: c}
-
-	// The internal API is optional: only employee-lifecycle resources need it,
-	// and requiring credentials for everyone would block users who only read.
-	username, userErr := resolveCredential(config.Username.ValueString(), "KALA_USERNAME")
-	password, passErr := resolveCredential(config.Password.ValueString(), "KALA_PASSWORD")
-	switch {
-	case userErr == nil && passErr == nil:
+	if hasInternal {
 		clients.Internal = client.NewInternal(client.InternalConfig{
 			Username: username,
 			Password: password,
@@ -224,15 +232,57 @@ func (p *kalaProvider) Configure(ctx context.Context, req provider.ConfigureRequ
 			MaxRetries: cfg.MaxRetries,
 		})
 		tflog.Debug(ctx, "internal Kala API credentials configured")
-	case userErr == nil || passErr == nil:
+	} else if userErr == nil || passErr == nil {
 		// One without the other is a configuration mistake, not an opt-out.
 		resp.Diagnostics.AddWarning(
 			"Incomplete Kala internal API credentials",
 			"Only one of username/password was supplied, so the internal app API is not configured. "+
 				"Employee lifecycle resources will fail until both are set. Supply both, or neither.",
 		)
-	default:
+	} else {
 		tflog.Debug(ctx, "internal Kala API not configured; lifecycle resources unavailable")
+	}
+
+	// Fail fast on bad credentials — but only when asked to, and only for the
+	// APIs actually configured.
+	//
+	// Terraform invokes Configure for validate and plan as well as apply, so an
+	// unconditional check makes every command require network reachability and
+	// breaks credential-less CI jobs that only validate. This mirrors the AWS
+	// provider's skip_credentials_validation.
+	if skipValidation {
+		tflog.Debug(ctx, "Skipping Kala credential validation at user request")
+	} else {
+		if clients.Web != nil {
+			if err := clients.Web.Ping(ctx); err != nil {
+				resp.Diagnostics.AddAttributeError(
+					path.Root("api_key"),
+					"Could not authenticate against Kala",
+					"The Kala API rejected the supplied credentials or was unreachable.\n\n"+
+						"Error: "+err.Error()+"\n\n"+
+						"Set skip_credential_validation = true to bypass this check, for example in a "+
+						"credential-less CI job that only runs terraform validate.",
+				)
+				return
+			}
+		}
+		// The internal API was never validated here before, so a bad
+		// username/password surfaced only on the first apply. Its Ping is the
+		// sign-in handshake, whose session the first real call reuses.
+		if clients.Internal != nil {
+			if err := clients.Internal.Ping(ctx); err != nil {
+				resp.Diagnostics.AddAttributeError(
+					path.Root("username"),
+					"Could not authenticate against the Kala internal API",
+					"Kala rejected the supplied username and password, or was unreachable.\n\n"+
+						"Error: "+err.Error()+"\n\n"+
+						"Set skip_credential_validation = true to bypass this check, for example in a "+
+						"credential-less CI job that only runs terraform validate.",
+				)
+				return
+			}
+		}
+		tflog.Debug(ctx, "Kala credentials validated")
 	}
 
 	resp.DataSourceData = clients

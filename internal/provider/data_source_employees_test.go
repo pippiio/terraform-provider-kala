@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -42,7 +43,7 @@ func (f *fakeClient) GetEmployee(context.Context, int64) (client.Employee, error
 var _ client.Client = (*fakeClient)(nil)
 
 func newConfiguredDataSource(c client.Client) *employeesDataSource {
-	return &employeesDataSource{client: c}
+	return &employeesDataSource{clients: &providerClients{Web: c}}
 }
 
 func TestEmployeesDataSource_Metadata(t *testing.T) {
@@ -111,8 +112,38 @@ func TestEmployeesDataSource_ConfigureAcceptsClient(t *testing.T) {
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", resp.Diagnostics)
 	}
-	if ds.client == nil {
+	if ds.clients == nil || ds.clients.Web == nil {
 		t.Error("client was not stored")
+	}
+}
+
+// api_key is optional now, so a provider configured with only username/password
+// leaves Web unset. Reading this data source must then ask for the credential it
+// needs — not report a provider bug, and not quietly return nothing.
+func TestEmployeesDataSource_ReadWithoutWebClientAsksForTheAPIKey(t *testing.T) {
+	ds := NewEmployeesDataSource().(*employeesDataSource)
+
+	cfgResp := &datasource.ConfigureResponse{}
+	ds.Configure(context.Background(),
+		datasource.ConfigureRequest{ProviderData: &providerClients{Internal: newFakeInternal()}}, cfgResp)
+	if cfgResp.Diagnostics.HasError() {
+		t.Fatalf("configuring without a web client must not error: %v", cfgResp.Diagnostics)
+	}
+
+	resp := &datasource.ReadResponse{}
+	ds.Read(context.Background(), datasource.ReadRequest{}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("want a diagnostic when kala_employees is read without an api_key")
+	}
+	detail := resp.Diagnostics.Errors()[0].Detail()
+	for _, want := range []string{"api_key", "KALA_API_KEY"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("diagnostic should name %s, got %q", want, detail)
+		}
+	}
+	if strings.Contains(detail, "bug in the provider") {
+		t.Errorf("a missing api_key is a configuration gap, not a provider bug: %q", detail)
 	}
 }
 
@@ -166,10 +197,10 @@ func TestEmployeesDataSource_ReadSurfacesClientError(t *testing.T) {
 	fc := &fakeClient{listErr: errors.New("upstream exploded")}
 	ds := newConfiguredDataSource(fc)
 
-	if ds.client == nil {
+	if ds.clients == nil || ds.clients.Web == nil {
 		t.Fatal("test setup: client not set")
 	}
-	if _, err := ds.client.ListEmployees(context.Background(), client.ListOptions{}); err == nil {
+	if _, err := ds.clients.Web.ListEmployees(context.Background(), client.ListOptions{}); err == nil {
 		t.Error("want the client error to propagate")
 	}
 }

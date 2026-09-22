@@ -68,10 +68,15 @@ signed, and verified.
 Credentials resolve from the environment, so they need never enter a `.tf` file:
 
 ```bash
-export KALA_API_KEY=...    # webapiv2 — employee reads
-export KALA_USERNAME=...   # internal app API — employee lifecycle,
-export KALA_PASSWORD=...   #   plus all customer, case, and task data sources
+export KALA_API_KEY=...    # webapiv2 — the kala_employees data source, and nothing else
+export KALA_USERNAME=...   # internal app API — every resource, plus all
+export KALA_PASSWORD=...   #   customer, case, and task data sources
 ```
+
+Set whichever you use. `api_key` alone, `username`/`password` alone, and both are
+all valid; configuration fails only when you supply neither, or one half of the
+`username`/`password` pair. Using something without its credential produces a
+diagnostic naming the credential it wants.
 
 ```hcl
 provider "kala" {
@@ -104,7 +109,8 @@ Kala's surface is split across two APIs and neither is sufficient alone: the
 documented `webapiv2` covers **employee reads**, while the app's internal API
 owns employee **lifecycle** — creation, activation, and every profile field —
 and is the **only** source of customers, cases, and tasks. `username`/`password`
-are therefore required by every data source below except `kala_employees`.
+are therefore required by every data source below except `kala_employees`, and
+`api_key` is required by nothing else.
 
 ### How the two APIs differ
 
@@ -318,7 +324,9 @@ never confirmed and they are not exposed.
 ### Operational
 
 - All six customer, case, and task data sources require `KALA_USERNAME` and
-  `KALA_PASSWORD`. Only `kala_employees` works with `api_key` alone.
+  `KALA_PASSWORD`, as does every resource. Only `kala_employees` uses `api_key`,
+  and it is the only thing that does — so a configuration that never reads it
+  needs no `api_key` at all.
 - They read Kala's **internal, undocumented, unversioned** app API, because
   `webapiv2` does not expose these entities usefully. It may change without
   notice.

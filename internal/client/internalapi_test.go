@@ -22,6 +22,7 @@ type internalMock struct {
 
 	signIns    int32
 	selects    int32
+	workerList int32
 	workers    map[int64]*wireWorker
 	lastSetVal *wireSetValidatedRequest
 	lastSignUp *wireSignUpRequest
@@ -63,6 +64,7 @@ func newInternalMock(t *testing.T) *internalMock {
 			})
 
 		case strings.HasSuffix(r.URL.Path, "/api/Workers/"):
+			atomic.AddInt32(&m.workerList, 1)
 			if got := r.Header.Get("kauthtoken"); got != "session-token" {
 				t.Errorf("Workers called with kauthtoken %q", got)
 			}
@@ -173,6 +175,63 @@ func TestInternal_MissingCredentialsIsAClearError(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error should name %s, got %q", want, err.Error())
 		}
+	}
+}
+
+// Ping is what provider configuration calls to validate username/password. It
+// must establish the session and nothing more: configuration runs for validate
+// and plan as well as apply, so a probe that listed every worker would make the
+// cheapest Terraform command the most expensive one.
+func TestInternalPing_EstablishesSessionAndReadsNothingElse(t *testing.T) {
+	m := newInternalMock(t)
+	m.addWorker(1, "Galadriel", true)
+
+	if err := m.client().Ping(context.Background()); err != nil {
+		t.Fatalf("Ping: %v", err)
+	}
+
+	if got := atomic.LoadInt32(&m.signIns); got != 1 {
+		t.Errorf("SignIn calls = %d, want 1", got)
+	}
+	if got := atomic.LoadInt32(&m.selects); got != 1 {
+		t.Errorf("SelectCompany calls = %d, want 1", got)
+	}
+	if got := atomic.LoadInt32(&m.workerList); got != 0 {
+		t.Errorf("Workers calls = %d, want 0 — Ping must not read data", got)
+	}
+}
+
+// Rejected credentials must be reported as ErrUnauthorized so the provider can
+// attribute the diagnostic to username rather than to the network.
+func TestInternalPing_ReportsRejectedCredentials(t *testing.T) {
+	m := newInternalMock(t)
+	m.signInStatus = http.StatusUnauthorized
+
+	err := m.client().Ping(context.Background())
+	if err == nil {
+		t.Fatal("want an error when Kala rejects the credentials")
+	}
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Errorf("error = %v, want it to satisfy errors.Is(err, ErrUnauthorized)", err)
+	}
+}
+
+// Ping shares the cached session, so validating at configure time must leave
+// the token warm rather than force a second handshake on the first real call.
+func TestInternalPing_WarmsTheSessionForLaterCalls(t *testing.T) {
+	m := newInternalMock(t)
+	m.addWorker(1, "Galadriel", true)
+	c := m.client()
+
+	if err := c.Ping(context.Background()); err != nil {
+		t.Fatalf("Ping: %v", err)
+	}
+	if _, err := c.ListWorkers(context.Background()); err != nil {
+		t.Fatalf("ListWorkers: %v", err)
+	}
+
+	if got := atomic.LoadInt32(&m.signIns); got != 1 {
+		t.Errorf("SignIn calls = %d, want 1 — Ping should have warmed the session", got)
 	}
 }
 

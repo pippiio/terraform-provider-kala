@@ -1,5 +1,6 @@
 # Kala is two APIs, and which one a data source or resource uses decides which
-# credentials it needs.
+# credentials it needs. Set whichever you actually use — either alone is enough,
+# and the provider only objects if you supply neither.
 #
 #   export KALA_API_KEY=...    # webapiv2 — kala_employees only
 #   export KALA_USERNAME=...   # internal app API — the kala_employee resource,
@@ -27,7 +28,9 @@ provider "kala" {
   #
   # Terraform configures the provider for `validate` and `plan` as well as
   # `apply`, so the credential check needs network reachability every time. Set
-  # this in jobs that only validate configuration and hold no credentials.
+  # this in jobs that only validate configuration and hold no credentials: it
+  # skips the check for both APIs, and lets the provider configure with no
+  # credentials at all.
   #
   # skip_credential_validation = true
 }
