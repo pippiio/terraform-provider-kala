@@ -83,8 +83,11 @@ never by re-declaring them.**
 than allocated by Kala, so applying against a number already in use *adopts*
 that person and writes to their record. `terraform destroy` deactivates rather
 than deletes. Pick numbers deliberately, and read the comments in
-`employee/main.tf` first — particularly `send_welcome_email`, which sends real
-mail to a real person and cannot be recalled.
+`employee/main.tf` first. **Creating an employee always sends Kala's onboarding
+email** — `SignUp` sends it, not Terraform, and no attribute suppresses it.
+`send_welcome_email` governs only whether an *adopted* employee is mailed too;
+it defaults to `false` because that mail reaches a real person and cannot be
+recalled.
 
 ## Validating changes
 

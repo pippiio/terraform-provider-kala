@@ -8,8 +8,10 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	fwschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/defaults"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
@@ -586,11 +588,12 @@ func emptyEmployeeState(t *testing.T) tfsdk.State {
 
 func employeeModelFor(number int64, name, email string, active bool) employeeResourceModel {
 	return employeeResourceModel{
-		EmployeeNumber:   types.Int64Value(number),
-		Name:             types.StringValue(name),
-		Email:            types.StringValue(email),
-		Active:           types.BoolValue(active),
-		SendWelcomeEmail: types.BoolValue(true),
+		EmployeeNumber: types.Int64Value(number),
+		Name:           types.StringValue(name),
+		Email:          types.StringValue(email),
+		Active:         types.BoolValue(active),
+		// The schema default: adoption stays silent unless a test asks otherwise.
+		SendWelcomeEmail: types.BoolValue(false),
 		// Undeclared Optional+Computed attributes are null in a real plan, not
 		// empty strings — the distinction is what stops the provider blanking
 		// fields on an adopted employee.
@@ -1752,55 +1755,39 @@ func TestCreateEmployee_ExplicitFalseRoleIsWritten(t *testing.T) {
 }
 
 // --- welcome email --------------------------------------------------------
+//
+// Kala's SignUp endpoint mails the new employee itself, so Terraform must not
+// send a second one. send_welcome_email is therefore not a create-path switch
+// at all: it governs the one path Kala leaves alone, adoption of somebody who
+// already exists.
 
-func TestCreateEmployee_SendsWelcomeEmailOnGenuineCreation(t *testing.T) {
+// Genuine creation: Kala sent it. Terraform sends nothing, and says so, so the
+// opt-in is not mistaken for a second mail that never went out.
+func TestCreateEmployee_DoesNotSendASecondWelcomeEmailOnGenuineCreation(t *testing.T) {
 	fi := newFakeInternal()
 	r := newEmployeeResource(fi)
 
 	m := employeeModelFor(30, "New Hire", "hire@example.com", true)
+	m.SendWelcomeEmail = types.BoolValue(true)
+
 	resp := &resource.CreateResponse{State: emptyEmployeeState(t)}
 	r.Create(context.Background(), resource.CreateRequest{Plan: employeePlan(t, m)}, resp)
 
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("create failed: %s", diagsText(resp.Diagnostics))
 	}
-	if len(fi.welcomeSent) != 1 || fi.welcomeSent[0] != "hire@example.com" {
-		t.Errorf("want one welcome email to hire@example.com, got %v", fi.welcomeSent)
-	}
-}
-
-// The important half: adopting an existing person must NOT mail them. They
-// were onboarded long ago, and the email cannot be recalled.
-func TestCreateEmployee_NoWelcomeEmailWhenAdopting(t *testing.T) {
-	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "Existing", IsValidated: true})
-	r := newEmployeeResource(fi)
-
-	m := employeeModelFor(3, "Existing", "existing@example.com", true)
-	resp := &resource.CreateResponse{State: emptyEmployeeState(t)}
-	r.Create(context.Background(), resource.CreateRequest{Plan: employeePlan(t, m)}, resp)
-
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("adopt failed: %s", diagsText(resp.Diagnostics))
-	}
 	if len(fi.welcomeSent) != 0 {
-		t.Errorf("adoption must not email an already-onboarded person, got %v", fi.welcomeSent)
+		t.Errorf("SignUp already mailed them; Terraform must not send a second, got %v", fi.welcomeSent)
+	}
+	if !strings.Contains(diagsText(resp.Diagnostics), "hire@example.com") {
+		t.Errorf("creation must report that Kala mailed the address: %s", diagsText(resp.Diagnostics))
 	}
 }
 
-func TestCreateEmployee_NoWelcomeEmailWhenReactivating(t *testing.T) {
-	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "Returning", IsValidated: false})
-	r := newEmployeeResource(fi)
-
-	m := employeeModelFor(3, "Returning", "returning@example.com", true)
-	resp := &resource.CreateResponse{State: emptyEmployeeState(t)}
-	r.Create(context.Background(), resource.CreateRequest{Plan: employeePlan(t, m)}, resp)
-
-	if len(fi.welcomeSent) != 0 {
-		t.Errorf("reactivation must not send a welcome email, got %v", fi.welcomeSent)
-	}
-}
-
-func TestCreateEmployee_WelcomeEmailCanBeDisabled(t *testing.T) {
+// The same mail goes out when the opt-in is off, because the decision is not
+// Terraform's to make. Saying nothing here would leave the operator believing
+// send_welcome_email = false kept a real person's inbox clear.
+func TestCreateEmployee_WarnsThatCreationMailsEvenWithTheOptInOff(t *testing.T) {
 	fi := newFakeInternal()
 	r := newEmployeeResource(fi)
 
@@ -1813,22 +1800,98 @@ func TestCreateEmployee_WelcomeEmailCanBeDisabled(t *testing.T) {
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("create failed: %s", diagsText(resp.Diagnostics))
 	}
-	if !fi.createCalled {
-		t.Error("the employee should still be created")
-	}
 	if len(fi.welcomeSent) != 0 {
-		t.Errorf("send_welcome_email = false must suppress the email, got %v", fi.welcomeSent)
+		t.Errorf("Terraform must not mail on the creation path at all, got %v", fi.welcomeSent)
+	}
+	if resp.Diagnostics.WarningsCount() == 0 {
+		t.Fatal("creation mails the employee regardless; that must be said out loud")
+	}
+	if !strings.Contains(diagsText(resp.Diagnostics), "silent@example.com") {
+		t.Errorf("the warning must name who was mailed: %s", diagsText(resp.Diagnostics))
 	}
 }
 
-// The employee exists and is configured; only the mail failed. Failing the
-// apply would abandon state for a record that was created successfully.
+// Adoption is the path Kala leaves alone, so this is where the opt-in bites.
+func TestCreateEmployee_SendsWelcomeEmailWhenAdoptingAndAskedTo(t *testing.T) {
+	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "Existing", IsValidated: true})
+	r := newEmployeeResource(fi)
+
+	m := employeeModelFor(3, "Existing", "existing@example.com", true)
+	m.SendWelcomeEmail = types.BoolValue(true)
+
+	resp := &resource.CreateResponse{State: emptyEmployeeState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: employeePlan(t, m)}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("adopt failed: %s", diagsText(resp.Diagnostics))
+	}
+	if len(fi.welcomeSent) != 1 || fi.welcomeSent[0] != "existing@example.com" {
+		t.Errorf("want one welcome email to existing@example.com, got %v", fi.welcomeSent)
+	}
+}
+
+func TestCreateEmployee_SendsWelcomeEmailWhenReactivatingAndAskedTo(t *testing.T) {
+	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "Returning", IsValidated: false})
+	r := newEmployeeResource(fi)
+
+	m := employeeModelFor(3, "Returning", "returning@example.com", true)
+	m.SendWelcomeEmail = types.BoolValue(true)
+
+	resp := &resource.CreateResponse{State: emptyEmployeeState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: employeePlan(t, m)}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("reactivate failed: %s", diagsText(resp.Diagnostics))
+	}
+	if len(fi.welcomeSent) != 1 || fi.welcomeSent[0] != "returning@example.com" {
+		t.Errorf("want one welcome email to returning@example.com, got %v", fi.welcomeSent)
+	}
+}
+
+// The important half: adopting an existing person must NOT mail them unless
+// that was asked for. They were onboarded long ago, and the email cannot be
+// recalled — so the default has to be silence.
+func TestCreateEmployee_NoWelcomeEmailWhenAdoptingByDefault(t *testing.T) {
+	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "Existing", IsValidated: true})
+	r := newEmployeeResource(fi)
+
+	m := employeeModelFor(3, "Existing", "existing@example.com", true)
+
+	resp := &resource.CreateResponse{State: emptyEmployeeState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: employeePlan(t, m)}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("adopt failed: %s", diagsText(resp.Diagnostics))
+	}
+	if len(fi.welcomeSent) != 0 {
+		t.Errorf("adoption must not email an already-onboarded person, got %v", fi.welcomeSent)
+	}
+}
+
+func TestCreateEmployee_NoWelcomeEmailWhenReactivatingByDefault(t *testing.T) {
+	fi := newFakeInternal(client.Worker{WorkerNr: 3, Name: "Returning", IsValidated: false})
+	r := newEmployeeResource(fi)
+
+	m := employeeModelFor(3, "Returning", "returning@example.com", true)
+
+	resp := &resource.CreateResponse{State: emptyEmployeeState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: employeePlan(t, m)}, resp)
+
+	if len(fi.welcomeSent) != 0 {
+		t.Errorf("reactivation must not send a welcome email, got %v", fi.welcomeSent)
+	}
+}
+
+// The employee is adopted and configured; only the mail failed. Failing the
+// apply would abandon state for a record Terraform now owns.
 func TestCreateEmployee_WelcomeEmailFailureWarnsButSucceeds(t *testing.T) {
-	fi := newFakeInternal()
+	fi := newFakeInternal(client.Worker{WorkerNr: 32, Name: "Existing", IsValidated: true})
 	fi.welcomeErr = errors.New("smtp rejected")
 	r := newEmployeeResource(fi)
 
-	m := employeeModelFor(32, "New", "new@example.com", true)
+	m := employeeModelFor(32, "Existing", "existing@example.com", true)
+	m.SendWelcomeEmail = types.BoolValue(true)
+
 	resp := &resource.CreateResponse{State: emptyEmployeeState(t)}
 	r.Create(context.Background(), resource.CreateRequest{Plan: employeePlan(t, m)}, resp)
 
@@ -1838,17 +1901,12 @@ func TestCreateEmployee_WelcomeEmailFailureWarnsButSucceeds(t *testing.T) {
 	if resp.Diagnostics.WarningsCount() == 0 {
 		t.Fatal("a failed email must warn")
 	}
-
-	text := diagsText(resp.Diagnostics)
-	if !strings.Contains(text, "new@example.com") {
-		t.Errorf("the warning should name the address so it can be sent by hand: %s", text)
-	}
-	if !strings.Contains(text, "send_welcome_email = false") {
-		t.Errorf("the warning should mention the opt-out: %s", text)
+	if !strings.Contains(diagsText(resp.Diagnostics), "existing@example.com") {
+		t.Errorf("the warning should name the address so it can be sent by hand: %s", diagsText(resp.Diagnostics))
 	}
 }
 
-func TestEmployeeSchema_WelcomeEmailIsDocumentedAsCreateOnly(t *testing.T) {
+func TestEmployeeSchema_WelcomeEmailIsDocumentedAsAnAdoptionOptIn(t *testing.T) {
 	s := employeeSchema(t)
 
 	attr, ok := s.Attributes["send_welcome_email"]
@@ -1857,10 +1915,156 @@ func TestEmployeeSchema_WelcomeEmailIsDocumentedAsCreateOnly(t *testing.T) {
 	}
 	desc := strings.ToLower(attr.GetMarkdownDescription())
 	if !strings.Contains(desc, "adopt") {
-		t.Error("must document that adoption does not send the email")
+		t.Error("must document that adoption is the path this attribute governs")
 	}
 	if !strings.Contains(desc, "cannot be undone") {
 		t.Error("must warn that sending mail is irreversible")
+	}
+	if !strings.Contains(desc, "`false`") {
+		t.Error("must document the default, which is false — adoption stays silent unless asked")
+	}
+}
+
+// The default has to be false: a true default would mail every already
+// onboarded person the moment their employee_number got adopted.
+func TestEmployeeSchema_WelcomeEmailDefaultsToFalse(t *testing.T) {
+	s := employeeSchema(t)
+
+	attr, ok := s.Attributes["send_welcome_email"].(fwschema.BoolAttribute)
+	if !ok {
+		t.Fatal("send_welcome_email is not a bool attribute")
+	}
+	if attr.Default == nil {
+		t.Fatal("send_welcome_email must carry a default")
+	}
+
+	resp := defaults.BoolResponse{}
+	attr.Default.DefaultBool(context.Background(), defaults.BoolRequest{}, &resp)
+	if resp.PlanValue.ValueBool() {
+		t.Error("the default must be false; adopting somebody must never mail them by surprise")
+	}
+}
+
+// --- plan-time notice -----------------------------------------------------
+//
+// The mail goes out during apply, by which point it cannot be recalled. The
+// only useful moment to say so is the plan, so creation announces itself
+// there — before anybody types yes.
+
+func TestEmployeeModifyPlan_WarnsThatCreationWillMailThePerson(t *testing.T) {
+	r := newEmployeeResource(newFakeInternal())
+
+	m := employeeModelFor(40, "New Hire", "hire@example.com", true)
+	resp := &resource.ModifyPlanResponse{Plan: employeePlan(t, m)}
+	r.ModifyPlan(context.Background(), resource.ModifyPlanRequest{
+		Plan:  employeePlan(t, m),
+		State: emptyEmployeeState(t),
+	}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("plan failed: %s", diagsText(resp.Diagnostics))
+	}
+	if resp.Diagnostics.WarningsCount() == 0 {
+		t.Fatal("a plan that creates an employee must say the onboarding email will go out")
+	}
+	text := diagsText(resp.Diagnostics)
+	if !strings.Contains(text, "hire@example.com") {
+		t.Errorf("the notice must name the address that will be mailed: %s", text)
+	}
+	if !strings.Contains(text, "40") {
+		t.Errorf("the notice must name the employee number, which decides create vs adopt: %s", text)
+	}
+}
+
+// An employee already in state is not being created, so nothing gets mailed
+// and nothing should be said.
+func TestEmployeeModifyPlan_SilentWhenTheEmployeeIsAlreadyInState(t *testing.T) {
+	r := newEmployeeResource(newFakeInternal())
+
+	m := employeeModelFor(40, "New Hire", "hire@example.com", true)
+	resp := &resource.ModifyPlanResponse{Plan: employeePlan(t, m)}
+	r.ModifyPlan(context.Background(), resource.ModifyPlanRequest{
+		Plan:  employeePlan(t, m),
+		State: employeeState(t, m),
+	}, resp)
+
+	if len(resp.Diagnostics) != 0 {
+		t.Errorf("an update mails nobody; the plan must stay quiet: %s", diagsText(resp.Diagnostics))
+	}
+}
+
+// Destroy plans carry a null plan. Reading it as an employee would fail.
+func TestEmployeeModifyPlan_SilentOnDestroy(t *testing.T) {
+	r := newEmployeeResource(newFakeInternal())
+
+	m := employeeModelFor(40, "New Hire", "hire@example.com", true)
+	nullPlan := tfsdk.Plan{Schema: employeeSchema(t), Raw: tftypes.Value{}}
+	out := &resource.ModifyPlanResponse{Plan: nullPlan}
+	r.ModifyPlan(context.Background(), resource.ModifyPlanRequest{
+		Plan:  nullPlan,
+		State: employeeState(t, m),
+	}, out)
+
+	if len(out.Diagnostics) != 0 {
+		t.Errorf("destroy must not warn about mail: %s", diagsText(out.Diagnostics))
+	}
+}
+
+// Changing employee_number forces replacement, which creates a second person
+// under the new number rather than editing the first. That reaches SignUp just
+// as a fresh create does, even though the resource is already in state.
+func TestEmployeeModifyPlan_WarnsWhenTheEmployeeIsBeingReplaced(t *testing.T) {
+	r := newEmployeeResource(newFakeInternal())
+
+	before := employeeModelFor(40, "New Hire", "hire@example.com", true)
+	after := employeeModelFor(41, "New Hire", "hire@example.com", true)
+
+	// Attribute plan modifiers run before the resource's ModifyPlan, so
+	// RequiresReplace is already populated by the time it is called.
+	resp := &resource.ModifyPlanResponse{
+		Plan:            employeePlan(t, after),
+		RequiresReplace: path.Paths{path.Root("employee_number")},
+	}
+	r.ModifyPlan(context.Background(), resource.ModifyPlanRequest{
+		Plan:  employeePlan(t, after),
+		State: employeeState(t, before),
+	}, resp)
+
+	if resp.Diagnostics.WarningsCount() == 0 {
+		t.Fatal("a replacement creates somebody new; the plan must say the mail will go out")
+	}
+	text := diagsText(resp.Diagnostics)
+	if !strings.Contains(text, "41") {
+		t.Errorf("the notice must name the number being created, not the one being left behind: %s", text)
+	}
+}
+
+// An email interpolated from a resource that has not been created yet is
+// unknown at plan time. The notice still has to be legible.
+func TestEmployeeModifyPlan_HandlesAnUnknownEmail(t *testing.T) {
+	r := newEmployeeResource(newFakeInternal())
+
+	m := employeeModelFor(40, "New Hire", "hire@example.com", true)
+	typ := employeeSchema(t).Type().TerraformType(context.Background())
+	raw := employeeValue(t, m)
+	var obj map[string]tftypes.Value
+	if err := raw.As(&obj); err != nil {
+		t.Fatalf("decompose plan value: %v", err)
+	}
+	obj["email"] = tftypes.NewValue(tftypes.String, tftypes.UnknownValue)
+	unknownEmail := tfsdk.Plan{Schema: employeeSchema(t), Raw: tftypes.NewValue(typ.(tftypes.Object), obj)}
+
+	resp := &resource.ModifyPlanResponse{Plan: unknownEmail}
+	r.ModifyPlan(context.Background(), resource.ModifyPlanRequest{
+		Plan:  unknownEmail,
+		State: emptyEmployeeState(t),
+	}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("an unknown email must not break the plan: %s", diagsText(resp.Diagnostics))
+	}
+	if resp.Diagnostics.WarningsCount() == 0 {
+		t.Fatal("the notice must still be issued when the address is not yet known")
 	}
 }
 

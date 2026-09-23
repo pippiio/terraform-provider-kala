@@ -68,7 +68,8 @@ resource "kala_employee" "departed" {
 # reactivates it rather than failing or creating a second person — which is what
 # makes re-onboarding work at all.
 #
-# No welcome email is sent on adoption or reactivation.
+# No welcome email is sent on adoption or reactivation unless
+# send_welcome_email = true asks for one.
 resource "kala_employee" "returning" {
   employee_number = 121
   name            = "Samwise Gamgee"
@@ -76,9 +77,11 @@ resource "kala_employee" "returning" {
   active          = true
 }
 
-# A migration of people who already exist in Kala. send_welcome_email = false
-# matters here: mail reaches a real person and cannot be recalled, and these
-# employees have been working for years.
+# A migration of people who already exist in Kala. These employee numbers are
+# already in use, so this adopts those people rather than creating them — and
+# send_welcome_email = false (the default, spelled out here) keeps it that way:
+# re-onboarding someone who has worked here for years would only confuse them,
+# and mail cannot be recalled.
 locals {
   office_staff = {
     bilbo = {
@@ -140,9 +143,11 @@ Kala's write endpoint takes a timestamp plus a GMT offset while its read returns
 - `leader_note` (String) Free-text note visible to leaders. Leave unset to adopt Kala's current value.
 - `license_plate` (String) Vehicle registration recorded against the employee. Leave unset to adopt Kala's current value.
 - `phone` (String) Work phone number. Leave unset to adopt Kala's current value.
-- `send_welcome_email` (Boolean) Send Kala's onboarding email when this resource **creates** a new employee. Defaults to `true`.
+- `send_welcome_email` (Boolean) Send Kala's onboarding email when this resource **adopts** an existing `employee_number`, or reactivates somebody who had been deactivated. Defaults to `false`, because those people were onboarded long ago and mailing them again would be confusing at best.
 
-It is never sent when an existing `employee_number` is adopted or reactivated — those people have been onboarded already. Because sending mail reaches a real person and cannot be undone, set this to `false` for migrations, imports, or test runs.
+> **It does not govern creation.** Creating a new employee goes through Kala's `SignUp` endpoint, which sends the onboarding email itself. Terraform does not send a second one, and setting this to `false` cannot stop the first.
+
+Because sending mail reaches a real person and cannot be undone, this is an opt-in: set it to `true` only when re-onboarding is what you actually want.
 
 This only takes effect at creation; changing it afterwards does nothing.
 - `title` (String) Job title. Leave unset to adopt Kala's current value.
@@ -170,6 +175,6 @@ terraform import kala_employee.smith 101
 
 # Every attribute on Kala's record is recovered, including name and email.
 # send_welcome_email is not part of that record — it describes what Terraform
-# should do at creation — so it defaults to true. Set it explicitly if this
-# resource must never send mail.
+# should do at creation — so it defaults to false and an imported employee is
+# never mailed.
 ```

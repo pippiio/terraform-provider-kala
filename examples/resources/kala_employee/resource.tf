@@ -44,7 +44,8 @@ resource "kala_employee" "departed" {
 # reactivates it rather than failing or creating a second person — which is what
 # makes re-onboarding work at all.
 #
-# No welcome email is sent on adoption or reactivation.
+# No welcome email is sent on adoption or reactivation unless
+# send_welcome_email = true asks for one.
 resource "kala_employee" "returning" {
   employee_number = 121
   name            = "Samwise Gamgee"
@@ -52,9 +53,11 @@ resource "kala_employee" "returning" {
   active          = true
 }
 
-# A migration of people who already exist in Kala. send_welcome_email = false
-# matters here: mail reaches a real person and cannot be recalled, and these
-# employees have been working for years.
+# A migration of people who already exist in Kala. These employee numbers are
+# already in use, so this adopts those people rather than creating them — and
+# send_welcome_email = false (the default, spelled out here) keeps it that way:
+# re-onboarding someone who has worked here for years would only confuse them,
+# and mail cannot be recalled.
 locals {
   office_staff = {
     bilbo = {
