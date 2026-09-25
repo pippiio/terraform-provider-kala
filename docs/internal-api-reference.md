@@ -69,6 +69,26 @@ Same entity, two identifier spellings across two endpoints.
 | `/api/RenameCaseCustomerPhoneNumber/` | POST | `caseNr` | carries `oldPhoneNumber` — `old`, not `previous` |
 | `/api/ChangeCaseCustomer/` | POST | `caseNr` | `newCustomerId` when assigning, `oldCustomerId` when converting to internal |
 | `/api/ArchiveCase/` | **GET** | `caseNr` (query) | a **write performed by GET** |
+| `/api/GetJobDetailsAdvanced/` | GET | `caseNr` (query) | the per-case read. **64 fields**; see below |
+
+**`GetJobDetailsAdvanced` embeds the checklist items, with their assigned workers.**
+Observed 2026-09-25. Alongside `caseId`, `restricted` and `checklistItemsTotal`, it carries
+`checklistItems[]`, and each item carries `workersAssigned[]`:
+
+```
+workersAssigned[0]: initials, isValidated, name, phone, title, workerImage, workerNr
+```
+
+So the (worker, case) grant is readable in **one call**, without touching
+`/Case/GetChecklistItemsPaged/` and without pagination — the items are embedded, not paged.
+`checklistItemsTotal` against `len(checklistItems)` is the completeness check, and it is
+self-describing: the payload states how many items exist.
+
+There is **no dedicated case-access field**. `projectRoles` exists and was empty in the tenant
+observed, so whether it is the real access model is unknown.
+
+`workersAssigned` carries personal data — name, phone, title, image. Only `workerNr` may cross
+the client boundary (SEC1.5).
 
 **`CreateCase` must always send `newCustomer:false`.** Its body carries a full
 customer record, and `true` creates a customer as a side effect of creating a
@@ -129,6 +149,38 @@ explanation available.
 Server errors arrive as ASP.NET HTML pages whose only useful sentence is the
 `<title>`; the client extracts it.
 
+## Numbers are not integers
+
+**Observed 2026-09-25, and it breaks shipped code.** `registeredHoursTotal` came back as
+**`0.25`** — a quarter hour. The client declares it, and every sibling numeric, as Go `int`:
+
+| Field group | Declared | Files |
+|---|---|---|
+| `registeredHoursTotal`, `billedHours` | `int` | `cases.go:105-106,191-192`, `tasks.go:85-86,166-167` |
+| `cost`, `sales`, `result`, `invoiced`, `uninvoiced`, `realised` | `int` | `cases.go:99-104,185-190` |
+| `priceFixed` | `*int` | `tasks.go` |
+
+A decimal in any of them is a **decode failure, not a rounding error** — the read dies:
+
+```
+json: cannot unmarshal number 0.25 into Go struct field
+wireTasksPage.items.0.registeredHoursTotal of type int
+```
+
+`ListTasks` fails outright for such a case, so `kala_tasks` is broken for it today, and
+`kala_cases` and the `kala_case` resource are exposed on the same field via `wireCaseDetail`.
+
+**Treat every Kala numeric as potentially fractional.** Hours are quarter-hours and money has
+decimals; only identifiers and counts are safe as integers.
+
+Two ways out, and they are not equivalent. Truncating to `int` reports 0.25 hours as `0`, which is
+worse than failing. Decoding as `float64` is correct but changes `registered_hours_total` from
+`Int64` to `Float64` on two shipped data sources — a breaking schema change.
+
+**A reader who only needs some fields can sidestep this entirely:** `encoding/json` ignores fields
+absent from the target struct, so a narrow wire type that never declares the decimal-bearing field
+decodes the same payload successfully. Verified against the case that fails.
+
 ## Things that do not round-trip
 
 - **Task deadlines.** The create response echoes the millisecond value it was
@@ -151,6 +203,7 @@ There is no rule here, only a table.
 
 ## Observation dates
 
-Everything here was observed between **2026-09-07 and 2026-09-09** against a
-single-company tenant. Multi-company behaviour is untested: the `kacompany`
+Most of this was observed between **2026-09-07 and 2026-09-09**; the
+`GetJobDetailsAdvanced` shape and the decimal-numeric finding on **2026-09-25**,
+both against a single-company tenant. Multi-company behaviour is untested: the `kacompany`
 header is sent, but no account with several companies was available.
