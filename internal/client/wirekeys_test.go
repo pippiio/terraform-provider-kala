@@ -118,6 +118,31 @@ func TestWireKeys_MocksDependOnKeysThatActuallyExist(t *testing.T) {
 			keys: []string{"id", "caseId", "caseNr", "workerNr", "checklistIds"},
 			why:  "job link creation; note the response says `id` and the request says `jobLinkId`",
 		},
+		{
+			name: "wireCaseAccess",
+			typ:  wireCaseAccess{},
+			// checklistItems is the one to watch. It is EMBEDDED in the case
+			// detail payload, which is what lets the access read cost one call
+			// instead of a separate paginated task scan. If that key is ever
+			// renamed upstream, the read silently returns an empty grant rather
+			// than failing -- checklistItemsTotal is what catches it.
+			keys: []string{"caseId", "restricted", "checklistItemsTotal", "checklistItems"},
+			why:  "the case-access read; observed 2026-09-25 against tenant 17221",
+		},
+		{
+			name: "wireCaseAccessItem",
+			typ:  wireCaseAccessItem{},
+			// jsonKeys only walks ANONYMOUS fields, so a nested struct needs its
+			// own entry. Registering the parent alone would assert nothing here.
+			keys: []string{"workersAssigned"},
+			why:  "the per-item worker collection the grant is derived from",
+		},
+		{
+			name: "wireCaseAccessWorker",
+			typ:  wireCaseAccessWorker{},
+			keys: []string{"workerNr"},
+			why:  "the only field taken from a collection that also carries name, phone and title",
+		},
 	}
 
 	for _, tc := range cases {
