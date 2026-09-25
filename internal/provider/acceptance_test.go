@@ -37,9 +37,14 @@ import (
 // # What running these does to the tenant
 //
 // They create (once) and then repeatedly deactivate and reactivate the
-// employees named by the variables below. They never send a welcome email:
-// every configuration here sets send_welcome_email = false, because mail
-// reaches a real person and cannot be recalled.
+// employees named by the variables below.
+//
+// The FIRST run mails KALA_ACC_EMAIL, and nothing here can prevent it: Kala's
+// SignUp endpoint sends the onboarding email itself. Point the variable at an
+// address you own. Every run after that adopts the employee who now exists,
+// and every configuration here sets send_welcome_email = false, so no further
+// mail is sent — which matters, because mail reaches a real person and cannot
+// be recalled.
 
 const (
 	envAccNumber    = "KALA_ACC_EMPLOYEE_NUMBER"

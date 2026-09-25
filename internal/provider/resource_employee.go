@@ -25,6 +25,7 @@ var (
 	_ resource.Resource                = &employeeResource{}
 	_ resource.ResourceWithConfigure   = &employeeResource{}
 	_ resource.ResourceWithImportState = &employeeResource{}
+	_ resource.ResourceWithModifyPlan  = &employeeResource{}
 )
 
 // NewEmployeeResource returns the kala_employee resource.
@@ -104,12 +105,16 @@ func (r *employeeResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			"send_welcome_email": schema.BoolAttribute{
 				Optional: true,
 				Computed: true,
-				Default:  booldefault.StaticBool(true),
-				MarkdownDescription: "Send Kala's onboarding email when this resource **creates** a new " +
-					"employee. Defaults to `true`.\n\n" +
-					"It is never sent when an existing `employee_number` is adopted or reactivated — those " +
-					"people have been onboarded already. Because sending mail reaches a real person and " +
-					"cannot be undone, set this to `false` for migrations, imports, or test runs.\n\n" +
+				Default:  booldefault.StaticBool(false),
+				MarkdownDescription: "Send Kala's onboarding email when this resource **adopts** an existing " +
+					"`employee_number`, or reactivates somebody who had been deactivated. Defaults to " +
+					"`false`, because those people were onboarded long ago and mailing them again would " +
+					"be confusing at best.\n\n" +
+					"> **It does not govern creation.** Creating a new employee goes through Kala's " +
+					"`SignUp` endpoint, which sends the onboarding email itself. Terraform does not send " +
+					"a second one, and setting this to `false` cannot stop the first.\n\n" +
+					"Because sending mail reaches a real person and cannot be undone, this is an opt-in: " +
+					"set it to `true` only when re-onboarding is what you actually want.\n\n" +
 					"This only takes effect at creation; changing it afterwards does nothing.",
 				PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
 			},
@@ -212,6 +217,70 @@ func (r *employeeResource) Configure(_ context.Context, req resource.ConfigureRe
 	r.clients = c
 }
 
+// ModifyPlan warns, while there is still time to say no, that applying will
+// mail somebody.
+//
+// Kala's SignUp endpoint sends the onboarding email itself, during apply, to a
+// real person — and an email cannot be recalled. The plan is therefore the
+// last moment at which the operator can still decline.
+//
+// Two plans reach SignUp: a null prior state, which is exactly "this resource
+// is about to be created", and a replacement, which creates a second person
+// rather than editing the first. Attribute plan modifiers have already run by
+// the time this is called, so RequiresReplace is populated and catches the
+// employee_number change that forces one.
+func (r *employeeResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// Destroy: there is no plan to read, and nobody is mailed.
+	if req.Plan.Raw.IsNull() {
+		return
+	}
+
+	creating := req.State.Raw.IsNull()
+	replacing := len(resp.RequiresReplace) > 0
+	// An in-place update mails nobody: send_welcome_email takes effect at
+	// creation only.
+	if !creating && !replacing {
+		return
+	}
+
+	var plan employeeResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Either value can be interpolated from a resource that does not exist
+	// yet, and an unknown must not be printed as an empty address or a zero
+	// employee number.
+	address := "the configured address"
+	if !plan.Email.IsNull() && !plan.Email.IsUnknown() {
+		address = strconv.Quote(plan.Email.ValueString())
+	}
+	number := "this employee"
+	if !plan.EmployeeNumber.IsNull() && !plan.EmployeeNumber.IsUnknown() {
+		number = strconv.FormatInt(plan.EmployeeNumber.ValueInt64(), 10)
+	}
+
+	adoption := "no onboarding email is sent unless send_welcome_email = true"
+	if plan.SendWelcomeEmail.ValueBool() {
+		adoption = "send_welcome_email = true means the onboarding email is sent to them as well"
+	}
+
+	lead := fmt.Sprintf("Employee %s is not in Terraform state, so applying this plan creates them", number)
+	if !creating {
+		lead = fmt.Sprintf("This change replaces the resource, so applying this plan creates employee %s afresh", number)
+	}
+
+	resp.Diagnostics.AddWarning(
+		"Applying this plan will send Kala's onboarding email",
+		fmt.Sprintf(
+			"%s through Kala's SignUp endpoint — which sends the onboarding email to %s itself. "+
+				"That reaches a real person and cannot be undone.\n\nIf employee %s already exists "+
+				"in Kala they are adopted instead, and %s.",
+			lead, address, number, adoption),
+	)
+}
+
 // Create either provisions a new employee or adopts an existing one.
 //
 // Adoption is deliberate, not a fallback for an error. Employee numbers are
@@ -308,27 +377,27 @@ func (r *employeeResource) Create(ctx context.Context, req resource.CreateReques
 			}
 		}
 
-		// Welcome email — genuine creation only. An adopted employee has been
-		// onboarded already, and mailing them again would be confusing at best.
-		if plan.SendWelcomeEmail.ValueBool() {
-			if err := internal.SendWelcomeEmail(ctx, plan.Email.ValueString()); err != nil {
-				// The employee exists and is configured; only the email failed.
-				// Failing the apply here would abandon state for a record that
-				// was created successfully, so this warns instead — but says
-				// plainly that it must be sent by hand.
-				resp.Diagnostics.AddWarning(
-					"Employee created, but the welcome email could not be sent",
-					fmt.Sprintf(
-						"Employee %d was created successfully and Terraform will record it, but Kala "+
-							"rejected the welcome email to %q.\n\nSend it from the Kala interface, or "+
-							"set send_welcome_email = false to stop Terraform attempting it.\n\nError: %s",
-						number, plan.Email.ValueString(), err.Error()),
-				)
-			} else {
-				tflog.Debug(ctx, "sent welcome email for new employee",
-					map[string]any{"employee_number": number})
-			}
+		// SignUp mails the new employee itself, so Terraform sends nothing here
+		// — a second one would land in a real person's inbox. Neither value of
+		// send_welcome_email changes that, and both misreadings are worth
+		// correcting out loud: that Terraform sent the mail, or that `false`
+		// stopped it.
+		reason := "Terraform did not send a second one, so send_welcome_email = true had no " +
+			"effect here — it governs adoption of an existing employee, not creation."
+		if !plan.SendWelcomeEmail.ValueBool() {
+			reason = "send_welcome_email = false could not prevent this. That attribute governs " +
+				"adoption of an existing employee; whether a newly created one is mailed is " +
+				"Kala's decision, not Terraform's."
 		}
+		resp.Diagnostics.AddWarning(
+			"Kala sent the onboarding email to the new employee",
+			fmt.Sprintf(
+				"Employee %d was created through Kala's SignUp endpoint, which sends the onboarding "+
+					"email to %q itself.\n\n%s",
+				number, plan.Email.ValueString(), reason),
+		)
+		tflog.Debug(ctx, "employee created; SignUp sent the onboarding email",
+			map[string]any{"employee_number": number})
 
 	default:
 		resp.Diagnostics.AddError("Could not look up the Kala employee", err.Error())
@@ -342,6 +411,30 @@ func (r *employeeResource) Create(ctx context.Context, req resource.CreateReques
 	if !r.applyFieldChanges(ctx, internal, number, plan, prior, &resp.Diagnostics) {
 		r.recordPartialCreate(ctx, plan, internal, resp)
 		return
+	}
+
+	// Re-onboarding an existing person is the one mail Kala leaves to us, and
+	// the only one send_welcome_email decides. It is sent after convergence
+	// because the endpoint is keyed on the email address: sending before
+	// SetEmailNew has run would name an address Kala does not yet hold.
+	if plan.Adopted.ValueBool() && plan.SendWelcomeEmail.ValueBool() {
+		if err := internal.SendWelcomeEmail(ctx, plan.Email.ValueString()); err != nil {
+			// The employee is adopted and configured; only the email failed.
+			// Failing the apply here would abandon state for a record
+			// Terraform now owns, so this warns instead — but says plainly
+			// that it must be sent by hand.
+			resp.Diagnostics.AddWarning(
+				"Employee adopted, but the welcome email could not be sent",
+				fmt.Sprintf(
+					"Employee %d was adopted successfully and Terraform will record it, but Kala "+
+						"rejected the welcome email to %q.\n\nSend it from the Kala interface, or "+
+						"set send_welcome_email = false to stop Terraform attempting it.\n\nError: %s",
+					number, plan.Email.ValueString(), err.Error()),
+			)
+		} else {
+			tflog.Debug(ctx, "sent welcome email to an adopted employee",
+				map[string]any{"employee_number": number})
+		}
 	}
 
 	if !r.refresh(ctx, &plan, internal, &resp.Diagnostics) {
@@ -492,8 +585,9 @@ func (r *employeeResource) ImportState(ctx context.Context, req resource.ImportS
 		"Every other attribute is recovered from Kala's record. send_welcome_email is not part of "+
 			"that record: it describes what Terraform should do at creation, not a property of the "+
 			"employee.\n\n"+
-			"It defaults to true. Set it explicitly to false if this resource must never send mail, "+
-			"including if it were ever to recreate the employee.",
+			"It defaults to false, so an imported employee will not be mailed. It only ever applies "+
+			"when this resource adopts an existing employee — creating one mails them either way, "+
+			"because Kala's SignUp endpoint sends the onboarding email itself.",
 	)
 }
 

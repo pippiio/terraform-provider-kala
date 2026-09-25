@@ -71,10 +71,15 @@ resource "kala_employee" "site_manager" {
 
 # --- 3. Office staff, migrated in bulk ----------------------------------------
 #
-# These people already exist in Kala and have for years. send_welcome_email =
-# false is the important line: mail reaches a real person and cannot be
-# recalled, and re-onboarding someone who has worked here for a decade is a
-# confusing thing to do to them.
+# These people already exist in Kala and have for years, so this block adopts
+# them rather than creating them. send_welcome_email = false is the default and
+# is spelled out here because it is the line that matters on an adoption: set
+# it to true and Kala re-onboards someone who has worked here for a decade.
+# Mail reaches a real person and cannot be recalled.
+#
+# Note that this attribute has no say over a genuine creation. Kala's SignUp
+# endpoint sends the onboarding email itself, so the new hires above were
+# mailed whatever this is set to.
 
 locals {
   office_staff = {

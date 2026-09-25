@@ -171,8 +171,10 @@ being "already in use" is normal for anyone who has ever offboarded someone. The
 resource takes ownership and reactivates them if inactive, leaving every
 attribute your configuration does not mention untouched.
 
-**Welcome emails only fire on genuine creation.** Never on adoption or
-reactivation. Set `send_welcome_email = false` to suppress them entirely.
+**Creating an employee always sends Kala's onboarding email.** `SignUp` sends it,
+not Terraform, and no attribute suppresses it — the plan says so before you
+apply. `send_welcome_email` governs only whether an *adopted* or reactivated
+employee is mailed as well, and defaults to `false`.
 
 **Employee settings are read-only.** `kala_employees` surfaces the key/value
 settings Kala returns, but the provider does not write them. Kala's list endpoint
@@ -417,9 +419,10 @@ Once reserved, the suite is safely repeatable. Create is an upsert and destroy
 deactivates, so every run after the first adopts and reactivates the same record
 rather than making another. A hundred runs leave one employee, not a hundred.
 
-Every acceptance configuration sets `send_welcome_email = false`. Mail reaches a
-real person and cannot be recalled, so the suite never sends any — including on
-the very first run, when the employee is genuinely created.
+The very first run mails `KALA_ACC_EMAIL`, because creating an employee goes
+through `SignUp` and Kala sends the onboarding email itself. Point the variable
+at an address you own. Every configuration sets `send_welcome_email = false`, so
+no further mail is sent on the adopt-and-reactivate runs that follow.
 
 The tests leave the employee **deactivated**, because that is what
 `terraform destroy` does and what `CheckDestroy` verifies. That is the expected
