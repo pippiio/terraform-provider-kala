@@ -296,6 +296,7 @@ func (p *kalaProvider) DataSources(_ context.Context) []func() datasource.DataSo
 		NewCustomerDataSource,
 		NewCasesDataSource,
 		NewCaseDataSource,
+		NewCaseAccessDataSource,
 		NewTasksDataSource,
 		NewTaskDataSource,
 	}
