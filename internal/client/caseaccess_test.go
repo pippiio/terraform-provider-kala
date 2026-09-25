@@ -132,3 +132,78 @@ func TestGetCaseAccess_ReadsGrantFromCaseDetail(t *testing.T) {
 		t.Errorf("query was %q, want it to carry caseNr=KA-1", m.lastQuery)
 	}
 }
+
+// TestGetCaseAccess_CarriesIdentifiersOnly is a REGRESSION GUARD, not a test
+// that drove code: wireCaseAccessWorker declares only workerNr, so this passes
+// the first time it runs. That is worth stating rather than hiding, because a
+// test passing immediately is normally a sign of testing the wrong thing.
+//
+// What it guards is real. The upstream collection carries name, phone, title,
+// initials and workerImage, and the only thing keeping them out of Terraform
+// state is that the wire struct does not mention them. Adding one field to that
+// struct -- the obvious thing to do when someone wants to show names in the data
+// source -- would breach SEC1.5 silently. This fails if that happens.
+//
+// It asserts over the marshalled result rather than field by field, so it
+// catches a new field regardless of what it is called.
+func TestGetCaseAccess_CarriesIdentifiersOnly(t *testing.T) {
+	m := newCaseAccessMock(t)
+	m.detail = accessDetail(2, true, 2, accessItem(7, 3), accessItem(8, 4))
+
+	got, err := m.client().GetCaseAccess(context.Background(), "KA-1")
+	if err != nil {
+		t.Fatalf("GetCaseAccess: %v", err)
+	}
+
+	encoded, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshalling the result: %v", err)
+	}
+
+	// Every personal-data value accessItem puts on the wire.
+	for _, personal := range []string{
+		"Frodo Baggins", "31620005", "Senior Ring Bearer", "FB",
+	} {
+		if strings.Contains(string(encoded), personal) {
+			t.Errorf("CaseAccess carries %q; the wire struct must not declare personal fields (SEC1.5).\nGot: %s",
+				personal, encoded)
+		}
+	}
+
+	// And prove the read actually produced something, so an empty result
+	// cannot satisfy the assertions above.
+	if len(got.EmployeeNumbers) == 0 {
+		t.Fatal("EmployeeNumbers is empty; the assertions above would pass trivially")
+	}
+}
+
+// TestGetCaseAccess_DeduplicatesAndSorts drives real behaviour.
+//
+// A job link is shared per (worker, case), so a worker assigned to five of a
+// case's items appears in workersAssigned five times. The set must report them
+// once. Sorting is asserted here too: the provider layer turns this into an
+// unordered set, but a client returning arbitrary order makes its own tests
+// flaky, so the client's contract is deterministic.
+func TestGetCaseAccess_DeduplicatesAndSorts(t *testing.T) {
+	m := newCaseAccessMock(t)
+	m.detail = accessDetail(2, true, 3,
+		accessItem(7, 9, 3),
+		accessItem(8, 3, 5),
+		accessItem(9, 9),
+	)
+
+	got, err := m.client().GetCaseAccess(context.Background(), "KA-1")
+	if err != nil {
+		t.Fatalf("GetCaseAccess: %v", err)
+	}
+
+	want := []int64{3, 5, 9}
+	if len(got.EmployeeNumbers) != len(want) {
+		t.Fatalf("EmployeeNumbers = %v, want %v (deduplicated and sorted)", got.EmployeeNumbers, want)
+	}
+	for i, w := range want {
+		if got.EmployeeNumbers[i] != w {
+			t.Errorf("EmployeeNumbers[%d] = %d, want %d (got %v)", i, got.EmployeeNumbers[i], w, got.EmployeeNumbers)
+		}
+	}
+}

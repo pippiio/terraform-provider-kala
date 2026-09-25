@@ -46,6 +46,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 )
 
 // CaseAccess reports which employees are granted access to one case.
@@ -112,12 +113,21 @@ func (c *internalAPI) GetCaseAccess(ctx context.Context, caseNumber string) (Cas
 		return CaseAccess{}, fmt.Errorf("%w: case access response: %v", ErrDecode, err)
 	}
 
-	numbers := make([]int64, 0, len(wire.ChecklistItems))
+	// A job link is shared per (worker, case), so a worker assigned to five of
+	// the case's items appears five times here. Dedupe, then sort: the provider
+	// layer turns this into an unordered set, but an arbitrary order would make
+	// this package's own tests flaky.
+	seen := make(map[int64]struct{}, len(wire.ChecklistItems))
 	for _, item := range wire.ChecklistItems {
 		for _, w := range item.WorkersAssigned {
-			numbers = append(numbers, w.WorkerNr)
+			seen[w.WorkerNr] = struct{}{}
 		}
 	}
+	numbers := make([]int64, 0, len(seen))
+	for nr := range seen {
+		numbers = append(numbers, nr)
+	}
+	sort.Slice(numbers, func(i, j int) bool { return numbers[i] < numbers[j] })
 
 	return CaseAccess{
 		CaseID:          wire.CaseID,
