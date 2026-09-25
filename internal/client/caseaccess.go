@@ -41,8 +41,10 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -105,12 +107,46 @@ func (c *internalAPI) GetCaseAccess(ctx context.Context, caseNumber string) (Cas
 	raw, err := c.authedRequest(
 		ctx, http.MethodGet, "/api/GetJobDetailsAdvanced/?"+params.Encode(), nil, contentTypeHeader)
 	if err != nil {
+		// An unknown caseNr answers 500, so absence and an outage are
+		// indistinguishable here. Reporting not-found is the useful default --
+		// a typo is far likelier than a sustained fault, and the retry policy
+		// has already absorbed the transient case -- but the MESSAGE must not
+		// state absence as fact, or an outage sends the operator hunting for a
+		// typo that is not there.
+		if errors.Is(err, ErrServer) {
+			return CaseAccess{}, fmt.Errorf(
+				"%w: no case numbered %q, or Kala is failing: this endpoint answers 500 for an "+
+					"unknown case number, so the two cannot be told apart from the response alone",
+				ErrNotFound, caseNumber)
+		}
 		return CaseAccess{}, err
+	}
+
+	// Kala answers some unknown identifiers with HTTP 200 and no body at all.
+	// That is absence, not a malformed response, and calling it a decode error
+	// would report a bug where there is only a wrong case number.
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return CaseAccess{}, fmt.Errorf("%w: no case numbered %q", ErrNotFound, caseNumber)
 	}
 
 	var wire wireCaseAccess
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		return CaseAccess{}, fmt.Errorf("%w: case access response: %v", ErrDecode, err)
+	}
+
+	// The only incompleteness this read can detect. The payload states how many
+	// items the case has, so a truncated checklistItems is observable -- and it
+	// must be an error, because a short grant is indistinguishable from a case
+	// fewer people are assigned to.
+	//
+	// This is NOT the limitation described at the top of this file. That one --
+	// an employee granted access with no task at all -- leaves checklistItems
+	// complete and the grant wrong, and nothing here can see it.
+	if got, want := len(wire.ChecklistItems), wire.ChecklistItemsTotal; got != want {
+		return CaseAccess{}, fmt.Errorf(
+			"kala: case %q returned %d of %d checklist items, so which employees may register "+
+				"time on it cannot be established; refusing to report a partial grant",
+			caseNumber, got, want)
 	}
 
 	// A job link is shared per (worker, case), so a worker assigned to five of
