@@ -42,6 +42,10 @@ package client
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/url"
 )
 
 // CaseAccess reports which employees are granted access to one case.
@@ -62,9 +66,62 @@ type CaseAccess struct {
 	EmployeeNumbers []int64
 }
 
+// wireCaseAccess is the NARROW decode of /api/GetJobDetailsAdvanced/.
+//
+// It declares four things out of the endpoint's 64 fields, and the omissions are
+// load-bearing rather than tidiness. wireCaseDetail declares Kala's numerics as
+// Go int -- registeredHoursTotal, billedHours, cost, sales and the rest -- while
+// Kala returns decimals: 0.25 was observed on registeredHoursTotal. Decoding
+// into an int field is a hard failure, so wireCaseDetail cannot read such a
+// case at all.
+//
+// encoding/json ignores keys absent from the target struct, so declaring none of
+// those fields makes this type immune. Verified against the failing case before
+// this file existed. DO NOT add a numeric field here without making it float64.
+type wireCaseAccess struct {
+	CaseID              int64                `json:"caseId"`
+	Restricted          bool                 `json:"restricted"`
+	ChecklistItemsTotal int                  `json:"checklistItemsTotal"`
+	ChecklistItems      []wireCaseAccessItem `json:"checklistItems"`
+}
+
+type wireCaseAccessItem struct {
+	WorkersAssigned []wireCaseAccessWorker `json:"workersAssigned"`
+}
+
+// wireCaseAccessWorker takes the identifier and nothing else. Upstream this
+// element also carries name, phone, title, initials and workerImage; not
+// declaring them is what stops personal data crossing the boundary (SEC1.5).
+type wireCaseAccessWorker struct {
+	WorkerNr int64 `json:"workerNr"`
+}
+
 // GetCaseAccess reads the access grant for one case by its case NUMBER.
 func (c *internalAPI) GetCaseAccess(ctx context.Context, caseNumber string) (CaseAccess, error) {
-	_ = ctx
-	_ = caseNumber
-	return CaseAccess{}, nil // TODO(task 2.3): implement
+	params := url.Values{}
+	params.Set("caseNr", caseNumber)
+
+	raw, err := c.authedRequest(
+		ctx, http.MethodGet, "/api/GetJobDetailsAdvanced/?"+params.Encode(), nil, contentTypeHeader)
+	if err != nil {
+		return CaseAccess{}, err
+	}
+
+	var wire wireCaseAccess
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return CaseAccess{}, fmt.Errorf("%w: case access response: %v", ErrDecode, err)
+	}
+
+	numbers := make([]int64, 0, len(wire.ChecklistItems))
+	for _, item := range wire.ChecklistItems {
+		for _, w := range item.WorkersAssigned {
+			numbers = append(numbers, w.WorkerNr)
+		}
+	}
+
+	return CaseAccess{
+		CaseID:          wire.CaseID,
+		Restricted:      wire.Restricted,
+		EmployeeNumbers: numbers,
+	}, nil
 }
