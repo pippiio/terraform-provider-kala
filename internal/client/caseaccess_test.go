@@ -225,11 +225,17 @@ func TestGetCaseAccess_TruncatedItemsErrorsNamingBothCounts(t *testing.T) {
 	if err == nil {
 		t.Fatal("a truncated payload must error, not return a short grant")
 	}
-	// Both numbers, so the operator can see how far the read got.
-	for _, want := range []string{"2", "5"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error must name the count %s; got: %v", want, err)
-		}
+	// Assert the PHRASE, not the digits. Asserting on "2" and "5" separately
+	// would match incidentally -- "500" from the server-error path contains
+	// both -- so the test would pass against the wrong failure.
+	if !strings.Contains(err.Error(), "returned 2 of 5") {
+		t.Errorf("error must name how far the read got and how far it should have, "+
+			"as \"returned 2 of 5\"; got: %v", err)
+	}
+	// And it must not be mistaken for a missing case: the case exists, the
+	// response was short.
+	if errors.Is(err, ErrNotFound) {
+		t.Errorf("a truncated payload is not an absent case; got: %v", err)
 	}
 }
 
