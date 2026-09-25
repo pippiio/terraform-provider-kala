@@ -8,12 +8,20 @@
 //      types only -- to settle whether any of its unmapped fields carries a
 //      case-access collection.
 //   3. Dump a skeleton of POST /Case/GetChecklistItemsPaged/, in particular the
-//      shape of workersAssigned, which is the only readable source of the
-//      (worker, case) grant.
-//   4. Report totalCount against one page, which is the input to the supported
-//      case size (spec N4/AC16).
-//   5. Attempt the same task read on an ARCHIVED case (spec Q9).
+//      shape of workersAssigned.
+//   4. Attempt the same task read on an ARCHIVED case.
+//   5. Prove a narrow wire type decodes the case that breaks the shipped one.
 // Output: t.Log skeletons. Never a raw body, never a string value.
+//
+// What these established (track spike-findings F-1..F-6):
+//   - The grant is readable in ONE call: GetJobDetailsAdvanced embeds
+//     checklistItems, each carrying workersAssigned. No pagination, so no page
+//     ceiling -- checklistItemsTotal against len(checklistItems) is the
+//     completeness check, and it is self-describing.
+//   - Kala returns DECIMALS where the client declares int. registeredHoursTotal
+//     came back as 0.25, which makes ListTasks and wireCaseDetail broken decodes
+//     for such a case. A narrow wire type sidesteps it; the shipped defect is
+//     handed off as its own track.
 //
 // Dependencies: internalAPI.authedRequest, ListCases, ListTasks.
 // Side effects: outbound HTTPS reads only. No write endpoint is called.
@@ -281,5 +289,76 @@ func TestProbe_NarrowDecodeSurvivesDecimals(t *testing.T) {
 	if narrow.ChecklistItemsTotal != len(narrow.ChecklistItems) {
 		t.Logf("  NOTE: checklistItems is TRUNCATED (%d of %d) — the completeness check fires",
 			len(narrow.ChecklistItems), narrow.ChecklistItemsTotal)
+	}
+}
+
+// TestSkeletonRedactsPersonalData is the redaction regression for the probe
+// itself, and it is HERMETIC -- it runs in the default `go test ./...`, unlike
+// the probes above.
+//
+// The rule it satisfies is carried forward from the previous track: every new
+// endpoint gets a redaction test, because a test of exactly this shape found a
+// real credential leak. The probe reads two endpoints whose payloads carry
+// names, phone numbers, e-mail addresses and titles, and its only protection is
+// the walker in this file. Protection that nothing exercises is not protection.
+//
+// Two assertions, and the second is the one that keeps the first honest: a
+// walker that emitted nothing at all would pass a naive leak check.
+func TestSkeletonRedactsPersonalData(t *testing.T) {
+	const (
+		name  = "Frodo Baggins"
+		phone = "31620005"
+		email = "frodo@example.com"
+		title = "Senior Ring Bearer"
+		note  = "leader note nobody should read"
+	)
+
+	payload := []byte(`{
+	  "caseId": 42,
+	  "restricted": true,
+	  "checklistItemsTotal": 1,
+	  "leaderNote": "` + note + `",
+	  "customersName": "` + name + `",
+	  "customersEmail": "` + email + `",
+	  "cost": 12345,
+	  "checklistItems": [
+	    {
+	      "Id": 7,
+	      "createdBy": "` + name + `",
+	      "registeredHoursTotal": 0.25,
+	      "workersAssigned": [
+	        {"workerNr": 3, "name": "` + name + `", "phone": "` + phone + `",
+	         "title": "` + title + `", "initials": "FB", "isValidated": true}
+	      ]
+	    }
+	  ]
+	}`)
+
+	got := skeleton(payload)
+
+	for _, secret := range []string{name, phone, email, title, note} {
+		if strings.Contains(got, secret) {
+			t.Errorf("skeleton leaked %q into its output:\n%s", secret, got)
+		}
+	}
+
+	// The walker must still be describing the payload. Without this, an empty
+	// output would satisfy every assertion above.
+	for _, want := range []string{
+		"caseId: number = 42",        // allowlisted identifier, value shown
+		"restricted: bool = true",    // allowlisted flag, value shown
+		"workerNr: number = 3",       // the one field this track actually takes
+		"cost: number",               // NOT allowlisted: type only, no value
+		"customersName: string(len=", // string reported by length, never content
+		"workersAssigned: array[1]",  // array reported by length
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("skeleton did not describe %q; output was:\n%s", want, got)
+		}
+	}
+
+	// Commercially sensitive numerics must not have their values printed.
+	if strings.Contains(got, "12345") {
+		t.Errorf("skeleton printed a non-allowlisted numeric value:\n%s", got)
 	}
 }
