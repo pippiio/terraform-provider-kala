@@ -53,6 +53,7 @@ type fakeInternal struct {
 	truncateTasks    bool
 
 	cases            map[string]client.CaseDetail
+	caseAccess       map[string]client.CaseAccess
 	caseIn           client.NewCase
 	fieldWrites      map[client.CaseField]string
 	archivedCalls    []bool
@@ -63,6 +64,7 @@ type fakeInternal struct {
 	setCustomerErr   error
 	caseFieldErr     error
 	getCaseErr       error
+	getCaseAccessErr error
 
 	customers          map[int64]client.Customer
 	customerID         int64
@@ -328,6 +330,22 @@ func (f *fakeInternal) GetCase(_ context.Context, caseNumber string) (client.Cas
 		return client.CaseDetail{}, fmt.Errorf("case %s: %w", caseNumber, client.ErrNotFound)
 	}
 	return d, nil
+}
+
+// GetCaseAccess is served from its own map rather than derived from f.cases.
+// The real client reads the same endpoint as GetCase but decodes it narrowly,
+// and the two answers can legitimately disagree: GetCase fails on a case with
+// fractional hours where GetCaseAccess succeeds. A fake that computed one from
+// the other would hide exactly that difference.
+func (f *fakeInternal) GetCaseAccess(_ context.Context, caseNumber string) (client.CaseAccess, error) {
+	if f.getCaseAccessErr != nil {
+		return client.CaseAccess{}, f.getCaseAccessErr
+	}
+	a, ok := f.caseAccess[caseNumber]
+	if !ok {
+		return client.CaseAccess{}, fmt.Errorf("case %s: %w", caseNumber, client.ErrNotFound)
+	}
+	return a, nil
 }
 
 func (f *fakeInternal) EnsureJobLink(_ context.Context, caseID, workerNr int64) (client.JobLink, error) {

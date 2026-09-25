@@ -172,6 +172,18 @@ type InternalClient interface {
 	// GetCase reads one case by its string case number.
 	GetCase(ctx context.Context, caseNumber string) (CaseDetail, error)
 
+	// GetCaseAccess reads which employees are granted access to one case.
+	//
+	// Reads the same endpoint as GetCase but decodes it NARROWLY, and that is
+	// deliberate rather than duplication: CaseDetail declares Kala's numerics as
+	// int while Kala returns decimals, so GetCase fails outright on a case with
+	// fractional hours. See caseaccess.go for the full reasoning.
+	//
+	// The result is knowably incomplete -- an employee granted access with no
+	// task on the case cannot be seen -- and that cannot be detected. Read
+	// caseaccess.go before surfacing this anywhere.
+	GetCaseAccess(ctx context.Context, caseNumber string) (CaseAccess, error)
+
 	// SetCaseField sets one field on a case and verifies it by read-back.
 	//
 	// Reads the case first: every setter carries the value it expects to
