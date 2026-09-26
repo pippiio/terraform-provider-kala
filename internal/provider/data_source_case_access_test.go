@@ -393,3 +393,45 @@ func TestCaseAccessRead_MismatchedConfigSchemaIsReported(t *testing.T) {
 		t.Errorf("the client was called with %q; it must not be called at all", f.gotNr)
 	}
 }
+
+// TestCaseAccessSchema_SaysCaseGrantsNotEffectivePermission covers AC10 and
+// decision D4. Without it the data source's opening line — "the employees who
+// may register time against it" — overclaims: anyone who may register time
+// through a role rather than a grant on this case is not in the set.
+//
+// Found by reading the generated docs page against AC10, which the other
+// wording tests did not cover.
+func TestCaseAccessSchema_SaysCaseGrantsNotEffectivePermission(t *testing.T) {
+	sch := caseAccessSchema(t)
+	attr, ok := sch.Attributes["employee_numbers"]
+	if !ok {
+		t.Fatal("schema is missing employee_numbers")
+	}
+	for name, desc := range map[string]string{
+		"the data source description":      sch.MarkdownDescription,
+		"the employee_numbers description": attr.GetMarkdownDescription(),
+	} {
+		lower := strings.ToLower(desc)
+		for _, want := range []string{"effective-permission", "role"} {
+			if !strings.Contains(lower, want) {
+				t.Errorf("%s must say the set is not an effective-permission set and excludes "+
+					"role-based access (missing %q).\nGot: %s", name, want, desc)
+			}
+		}
+	}
+}
+
+// TestCaseAccessSchema_LongFormHasNoList keeps the generated page's frontmatter
+// readable. tfplugindocs strips the markdown description into the frontmatter
+// summary, and it glues list items together with no space between them
+// ("...access to it.An employee granted..."). Paragraphs survive intact.
+//
+// An earlier version of this test asserted that a plain Description was set.
+// It passed, and the frontmatter did not change: tfplugindocs does not use that
+// field. This asserts on the cause instead.
+func TestCaseAccessSchema_LongFormHasNoList(t *testing.T) {
+	if strings.Contains(caseAccessSchema(t).MarkdownDescription, "\n- ") {
+		t.Error("the data source description contains a markdown list; tfplugindocs glues list " +
+			"items together in the frontmatter summary. Use short paragraphs instead.")
+	}
+}

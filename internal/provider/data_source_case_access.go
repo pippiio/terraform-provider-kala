@@ -58,20 +58,28 @@ import (
 // and rejected as too soft: a case with no tasks does not merely risk reporting
 // empty, it ALWAYS reports empty, and two of the four cases in the development
 // tenant have no tasks.
+//
+// No markdown LIST in the long form, deliberately: tfplugindocs derives the
+// docs page's frontmatter summary by stripping the markdown, and it glues list
+// items together with no space ("...access to it.An employee..."). Paragraphs
+// survive the stripping intact.
 const (
 	caseAccessLimitationLong = "**This list is derived from task assignment, and it is incomplete " +
 		"by construction.**\n\n" +
 		"Kala exposes no endpoint that reports who may register time on a case. " +
 		"`employee_numbers` is computed from the employees assigned to the case's individual " +
-		"tasks, which is the only readable source. Three consequences follow, and this provider " +
-		"cannot detect any of them:\n\n" +
-		"- **A case with no tasks always reports an empty set**, however many employees have " +
-		"been granted access to it.\n" +
-		"- **An employee granted access but not assigned to any task on the case never " +
-		"appears.**\n" +
-		"- The set reports who has been *granted* access, not who is currently *able* to " +
+		"tasks, which is the only readable source. None of what follows can be detected by " +
+		"this provider:\n\n" +
+		"**A case with no tasks always reports an empty set**, however many employees have " +
+		"been granted access to it.\n\n" +
+		"**An employee granted access but not assigned to any task on the case never " +
+		"appears.**\n\n" +
+		"The set reports who has been *granted* access, not who is currently *able* to " +
 		"register time. A deactivated employee may remain in it, and will not resolve through " +
 		"`kala_employee`.\n\n" +
+		"It covers access granted **on this case only**. It is not an effective-permission set: " +
+		"anyone who may register time through a role rather than a grant on this case is not " +
+		"included.\n\n" +
 		"`restricted` does not resolve this. `restricted = false` means access is unrestricted, " +
 		"so the set says nothing at all. `restricted = true` with an empty set means **either** " +
 		"that nobody has been granted access **or** that those who have hold no tasks — the two " +
@@ -85,7 +93,9 @@ const (
 		"reports an empty set regardless of who has access, and an employee granted access " +
 		"without a task on the case never appears. Reports who is *granted* access, not who is " +
 		"*able* to register time: a deactivated employee may remain in the set and will not " +
-		"resolve through `kala_employee`, so take care iterating it with `for_each`.\n\n" +
+		"resolve through `kala_employee`, so take care iterating it with `for_each`. Grants on " +
+		"this case only — not an effective-permission set, so access held through a role is not " +
+		"included.\n\n" +
 		"Read together with `restricted`: `restricted = true` with an empty set means **either** " +
 		"that nobody is granted access **or** that nobody granted holds a task. " +
 		"**Not an authorization check.**"
@@ -112,7 +122,7 @@ func (d *caseAccessDataSource) Metadata(_ context.Context, req datasource.Metada
 func (d *caseAccessDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Which employees are granted access to a Kala case — the employees " +
-			"who may register time against it.\n\n" +
+			"who may register time against it through a grant on this case.\n\n" +
 			caseAccessLimitationLong,
 		Attributes: map[string]schema.Attribute{
 			"case_number": schema.StringAttribute{
