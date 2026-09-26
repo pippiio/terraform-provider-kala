@@ -112,7 +112,8 @@ func TestKalaTasks_EndToEnd_FractionalHoursAndPrice(t *testing.T) {
 	resp := &datasource.ReadResponse{State: tfsdk.State{Schema: sch}}
 	(&tasksDataSource{client: decimalClient(t)}).Read(context.Background(),
 		datasource.ReadRequest{Config: dsConfig(t, sch, map[string]tftypes.Value{
-			"case_id": tftypes.NewValue(tftypes.Number, 2),
+			"case_id":            tftypes.NewValue(tftypes.Number, 2),
+			"include_financials": tftypes.NewValue(tftypes.Bool, true),
 		})}, resp)
 
 	if resp.Diagnostics.HasError() {
@@ -143,5 +144,34 @@ func TestKalaCase_EndToEnd_FractionalFinancials(t *testing.T) {
 		"invoiced": 100.25, "uninvoiced": 0.75, "realised": 1.1,
 	} {
 		assertNumber(t, resp.State, root.WithAttributeName(name), want)
+	}
+}
+
+// TestTaskResource_StateWrittenAsInt64StillReads covers the one place the type
+// change touches PERSISTED state. A kala_task written by a release that declared
+// price_fixed Int64 has "price_fixed": 500 in its state file. Int64 and Float64
+// are both tftypes.Number, so the raw value is identical and no StateUpgrader is
+// needed -- this asserts that rather than relying on it.
+func TestTaskResource_StateWrittenAsInt64StillReads(t *testing.T) {
+	sch := taskResSchema(t)
+	obj, ok := sch.Type().TerraformType(context.Background()).(tftypes.Object)
+	if !ok {
+		t.Fatal("task resource schema is not an object")
+	}
+	vals := map[string]tftypes.Value{}
+	for name, typ := range obj.AttributeTypes {
+		vals[name] = tftypes.NewValue(typ, nil)
+	}
+	// Exactly as the Int64 schema serialised it: an integral Number.
+	vals["price_fixed"] = tftypes.NewValue(tftypes.Number, big.NewFloat(500))
+	vals["name"] = tftypes.NewValue(tftypes.String, "Mount gutter")
+
+	state := tfsdk.State{Schema: sch, Raw: tftypes.NewValue(obj, vals)}
+	var m taskResourceModel
+	if diags := state.Get(context.Background(), &m); diags.HasError() {
+		t.Fatalf("state written under the Int64 schema must read under the Float64 one: %v", diags)
+	}
+	if m.PriceFixed.ValueFloat64() != 500 {
+		t.Errorf("price_fixed = %v, want 500", m.PriceFixed.ValueFloat64())
 	}
 }

@@ -264,17 +264,17 @@ func TestGetCaseAccess_TruncatedItemsErrorsNamingBothCounts(t *testing.T) {
 	}
 }
 
-// TestGetCaseAccess_DecodesFractionalNumerics is the regression guard for spike
-// finding F-2, and it proves the guard guards something rather than asserting it.
+// TestGetCaseAccess_DecodesFractionalNumerics keeps the case-access read immune
+// to decimals, whatever the rest of the client does.
 //
 // The payload is the shape of the ARCHIVED case in the development tenant, which
-// carries registeredHoursTotal = 0.25. The narrow type must decode it; the
-// shipped wireCaseDetail must NOT, and that second assertion is the point. If
-// someone "tidies up" caseaccess.go to reuse wireCaseDetail, the first assertion
-// fails. If the shipped bug is ever fixed, the second fails and this test should
-// then be simplified rather than deleted.
+// carries registeredHoursTotal = 0.25. Until 2026-09-27 this test also asserted
+// that the shipped wireCaseDetail FAILED on the same payload -- that was what
+// proved the narrow type was doing real work. The decimal decode bug is now
+// fixed, the second assertion fired as designed, and this test was simplified
+// as its own failure message instructed, rather than deleted.
 //
-// It is also the unit-level evidence for AC13: the same code path serves archived
+// It remains the unit-level evidence for AC13: the same code path serves archived
 // and unarchived cases, there being no archival branch at all. The live evidence
 // is the probe, which read the archived case successfully (spike F-3, F-6).
 func TestGetCaseAccess_DecodesFractionalNumerics(t *testing.T) {
@@ -287,18 +287,6 @@ func TestGetCaseAccess_DecodesFractionalNumerics(t *testing.T) {
 	}
 	if len(got.Assigned) != 1 || got.Assigned[0] != 3 {
 		t.Errorf("Assigned = %v, want [3]", got.Assigned)
-	}
-
-	// The other half of the guard: the shipped wide decode still fails on this
-	// exact payload, so the narrow type is doing real work.
-	raw, err := json.Marshal(m.detail)
-	if err != nil {
-		t.Fatalf("marshalling the fixture: %v", err)
-	}
-	var wide wireCaseDetail
-	if err := json.Unmarshal(raw, &wide); err == nil {
-		t.Error("wireCaseDetail decoded a fractional registeredHoursTotal; " +
-			"spike F-2 appears fixed, so simplify this test rather than deleting it")
 	}
 }
 

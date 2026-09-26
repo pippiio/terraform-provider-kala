@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 )
 
@@ -78,5 +79,44 @@ func TestListTasks_DecodesFractionalHoursAndPrice(t *testing.T) {
 	}
 	if k.PriceFixed == nil || float64(*k.PriceFixed) != 549.95 {
 		t.Errorf("PriceFixed = %v, want 549.95", k.PriceFixed)
+	}
+}
+
+// TestTaskWrite_PriceFixedDecimalRoundTrips is a guard written AFTER the type
+// change, and cannot have been RED before it: TaskInput.PriceFixed was *int, so
+// 549.95 was not expressible. It guards the write path, which matters more than
+// the read path here because tasks are FULL-RECORD REPLACE -- every write sends
+// priceFixed back, so a lossy round trip would silently rewrite the price.
+func TestTaskWrite_PriceFixedDecimalRoundTrips(t *testing.T) {
+	m := newTaskWriteMock(t)
+	in := taskInput()
+	price := 549.95
+	in.PriceFixed = &price
+
+	got, err := m.client().CreateTask(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateTask with a fractional price: %v", err)
+	}
+	if got.PriceFixed == nil || *got.PriceFixed != 549.95 {
+		t.Errorf("read-back PriceFixed = %v, want 549.95", got.PriceFixed)
+	}
+	if sent, _ := m.writeBody(t, "AddChecklistItem")["priceFixed"].(float64); sent != 549.95 {
+		t.Errorf("sent priceFixed = %v, want 549.95", sent)
+	}
+}
+
+// The change from *int to *float64 must not alter what an INTEGER price looks
+// like on the wire, or every existing kala_task would send a different payload
+// on its next apply. encoding/json writes an integral float64 without a decimal
+// point; this pins that reliance rather than assuming it.
+func TestTaskWrite_IntegerPriceIsUnchangedOnTheWire(t *testing.T) {
+	price := 550.0
+	raw, err := json.Marshal(map[string]any{"priceFixed": &price})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(raw) != `{"priceFixed":550}` {
+		t.Errorf("an integral price marshals as %s, want {\"priceFixed\":550} — "+
+			"the payload for existing prices must be byte-identical", raw)
 	}
 }

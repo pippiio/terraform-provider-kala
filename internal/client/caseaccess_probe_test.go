@@ -18,10 +18,11 @@
 //     checklistItems, each carrying workersAssigned. No pagination, so no page
 //     ceiling -- checklistItemsTotal against len(checklistItems) is the
 //     completeness check, and it is self-describing.
-//   - Kala returns DECIMALS where the client declares int. registeredHoursTotal
-//     came back as 0.25, which makes ListTasks and wireCaseDetail broken decodes
-//     for such a case. A narrow wire type sidesteps it; the shipped defect is
-//     handed off as its own track.
+//   - Kala returns DECIMALS where the client declared int. registeredHoursTotal
+//     came back as 0.25, which made ListTasks and wireCaseDetail broken decodes
+//     for such a case. A narrow wire type sidestepped it. FIXED 2026-09-27 on
+//     fix/decimal-numeric-decode; the probes below record what was observed
+//     before the fix and are kept as that record.
 //
 // Dependencies: internalAPI.authedRequest, ListCases, ListTasks.
 // Side effects: outbound HTTPS reads only. No write endpoint is called.

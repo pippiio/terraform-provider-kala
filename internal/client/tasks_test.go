@@ -38,9 +38,9 @@ func newTaskMock(t *testing.T) *taskMock {
 			m.lastBody = body
 			m.bodies = append(m.bodies, body)
 			out := map[string]any{
-				"items":                    m.items,
-				"caseTotalCount":           4,
-				"caseFinishedCount":        1,
+				"items":             m.items,
+				"caseTotalCount":    4,
+				"caseFinishedCount": 1,
 				// Fractional, as observed live on 2026-09-25. These were integers
 				// here until the decimal decode bug was found, which is exactly
 				// why the bug shipped: no fixture ever carried a decimal.

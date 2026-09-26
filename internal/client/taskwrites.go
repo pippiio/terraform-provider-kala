@@ -53,7 +53,7 @@ type TaskInput struct {
 	ImageRequired bool
 
 	InvoiceMode string
-	PriceFixed  *int
+	PriceFixed  *float64
 
 	ExternalQualityCheckRequired    bool
 	ExternalQualityCheckTemplateURL string

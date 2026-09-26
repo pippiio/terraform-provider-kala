@@ -73,9 +73,9 @@ type taskModel struct {
 	CreatedBy        types.String `tfsdk:"created_by"`
 	FinishedBy       types.String `tfsdk:"finished_by"`
 
-	RegisteredHoursTotal types.Int64 `tfsdk:"registered_hours_total"`
-	BilledHours          types.Int64 `tfsdk:"billed_hours"`
-	PriceFixed           types.Int64 `tfsdk:"price_fixed"`
+	RegisteredHoursTotal types.Float64 `tfsdk:"registered_hours_total"`
+	BilledHours          types.Float64 `tfsdk:"billed_hours"`
+	PriceFixed           types.Float64 `tfsdk:"price_fixed"`
 }
 
 func taskAttributes() map[string]schema.Attribute {
@@ -122,7 +122,7 @@ func taskAttributes() map[string]schema.Attribute {
 		"billed_hours":           "Hours billed",
 		"price_fixed":            "Fixed price, when one is set",
 	} {
-		a[name] = schema.Int64Attribute{
+		a[name] = schema.Float64Attribute{
 			Computed:            true,
 			MarkdownDescription: desc + ". **Null unless `include_financials` is set.**",
 		}
@@ -321,9 +321,9 @@ type taskDataSourceModel struct {
 	CreatedBy        types.String `tfsdk:"created_by"`
 	FinishedBy       types.String `tfsdk:"finished_by"`
 
-	RegisteredHoursTotal types.Int64 `tfsdk:"registered_hours_total"`
-	BilledHours          types.Int64 `tfsdk:"billed_hours"`
-	PriceFixed           types.Int64 `tfsdk:"price_fixed"`
+	RegisteredHoursTotal types.Float64 `tfsdk:"registered_hours_total"`
+	BilledHours          types.Float64 `tfsdk:"billed_hours"`
+	PriceFixed           types.Float64 `tfsdk:"price_fixed"`
 }
 
 func (d *taskDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -515,9 +515,9 @@ func buildTaskModel(k client.Task, includeContacts, includeFinancials bool) task
 		CreatedBy:        types.StringNull(),
 		FinishedBy:       types.StringNull(),
 
-		RegisteredHoursTotal: types.Int64Null(),
-		BilledHours:          types.Int64Null(),
-		PriceFixed:           types.Int64Null(),
+		RegisteredHoursTotal: types.Float64Null(),
+		BilledHours:          types.Float64Null(),
+		PriceFixed:           types.Float64Null(),
 	}
 
 	if includeContacts {
@@ -531,10 +531,10 @@ func buildTaskModel(k client.Task, includeContacts, includeFinancials bool) task
 		m.FinishedBy = types.StringValue(k.FinishedBy)
 	}
 	if includeFinancials {
-		m.RegisteredHoursTotal = types.Int64Value(int64(k.RegisteredHoursTotal))
-		m.BilledHours = types.Int64Value(int64(k.BilledHours))
+		m.RegisteredHoursTotal = types.Float64Value(k.RegisteredHoursTotal)
+		m.BilledHours = types.Float64Value(k.BilledHours)
 		if k.PriceFixed != nil {
-			m.PriceFixed = types.Int64Value(int64(*k.PriceFixed))
+			m.PriceFixed = types.Float64Value(*k.PriceFixed)
 		}
 	}
 	return m

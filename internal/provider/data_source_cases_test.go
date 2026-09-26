@@ -284,11 +284,11 @@ func TestCaseRead_ExposesFinancialsWhenRequested(t *testing.T) {
 	})
 	var state caseDataSourceModel
 	resp.State.Get(context.Background(), &state)
-	if state.Sales.ValueInt64() != 4000 || state.Result.ValueInt64() != 2800 {
-		t.Errorf("sales/result = %d/%d, want 4000/2800", state.Sales.ValueInt64(), state.Result.ValueInt64())
+	if state.Sales.ValueFloat64() != 4000 || state.Result.ValueFloat64() != 2800 {
+		t.Errorf("sales/result = %v/%v, want 4000/2800", state.Sales.ValueFloat64(), state.Result.ValueFloat64())
 	}
-	if state.RegisteredHoursTotal.ValueInt64() != 37 {
-		t.Errorf("registered_hours_total = %d, want 37", state.RegisteredHoursTotal.ValueInt64())
+	if state.RegisteredHoursTotal.ValueFloat64() != 37 {
+		t.Errorf("registered_hours_total = %v, want 37", state.RegisteredHoursTotal.ValueFloat64())
 	}
 }
 

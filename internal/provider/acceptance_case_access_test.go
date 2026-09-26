@@ -44,10 +44,9 @@ func accCaseAccessPreCheck(t *testing.T) {
 // assigned to one of its tasks, and returns its number and the assigned set as
 // the TASK LIST reports it.
 //
-// Cases whose task list fails to decode are passed over and logged, not fatal:
-// the shipped ListTasks cannot read a case with fractional hours (tracked
-// separately as fix-decimal-numeric-decode), and that defect is not what this
-// test is about.
+// Cases whose task list fails to read are passed over and logged, not fatal:
+// choosing a case is not what this test is about. Until 2026-09-27 this path
+// was load-bearing -- ListTasks could not decode a case with fractional hours.
 func accCaseWithAssignments(t *testing.T) (string, []int64) {
 	t.Helper()
 	ctx := context.Background()

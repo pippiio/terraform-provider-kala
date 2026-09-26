@@ -50,6 +50,15 @@ func taskResValue(t *testing.T, m taskResourceModel) tftypes.Value {
 		}
 		return tftypes.NewValue(tftypes.Number, v.ValueInt64())
 	}
+	f64 := func(v types.Float64) tftypes.Value {
+		switch {
+		case v.IsUnknown():
+			return tftypes.NewValue(tftypes.Number, tftypes.UnknownValue)
+		case v.IsNull():
+			return tftypes.NewValue(tftypes.Number, nil)
+		}
+		return tftypes.NewValue(tftypes.Number, v.ValueFloat64())
+	}
 	bl := func(v types.Bool) tftypes.Value {
 		switch {
 		case v.IsUnknown():
@@ -63,7 +72,7 @@ func taskResValue(t *testing.T, m taskResourceModel) tftypes.Value {
 		"id": i64(m.ID), "case_number": str(m.CaseNumber), "case_id": i64(m.CaseID),
 		"name": str(m.Name), "description": str(m.Description), "deadline": str(m.Deadline),
 		"note_required": bl(m.NoteRequired), "image_required": bl(m.ImageRequired),
-		"invoice_mode": str(m.InvoiceMode), "price_fixed": i64(m.PriceFixed),
+		"invoice_mode": str(m.InvoiceMode), "price_fixed": f64(m.PriceFixed),
 		"is_finished": bl(m.IsFinished), "assignee_worker_number": i64(m.AssigneeWorkerNr),
 	})
 }
@@ -86,7 +95,7 @@ func plannedTask() taskResourceModel {
 		CaseID: types.Int64Unknown(), Name: types.StringValue("Mount gutter"),
 		Description: types.StringNull(), Deadline: types.StringValue("2026-09-30T15:11:32Z"),
 		NoteRequired: types.BoolValue(true), ImageRequired: types.BoolValue(false),
-		InvoiceMode: types.StringValue("REG_HOURS&STANDARD"), PriceFixed: types.Int64Value(500),
+		InvoiceMode: types.StringValue("REG_HOURS&STANDARD"), PriceFixed: types.Float64Value(500),
 		IsFinished: types.BoolUnknown(), AssigneeWorkerNr: types.Int64Unknown(),
 	}
 }
