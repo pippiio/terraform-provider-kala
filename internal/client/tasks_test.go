@@ -41,8 +41,11 @@ func newTaskMock(t *testing.T) *taskMock {
 				"items":                    m.items,
 				"caseTotalCount":           4,
 				"caseFinishedCount":        1,
-				"caseTotalNormTime":        0,
-				"caseTotalRegisteredHours": 0,
+				// Fractional, as observed live on 2026-09-25. These were integers
+				// here until the decimal decode bug was found, which is exactly
+				// why the bug shipped: no fixture ever carried a decimal.
+				"caseTotalNormTime":        1.5,
+				"caseTotalRegisteredHours": 0.25,
 			}
 			if m.total != nil {
 				out["totalCount"] = *m.total
