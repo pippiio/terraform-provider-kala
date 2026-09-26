@@ -164,35 +164,38 @@ Server errors arrive as ASP.NET HTML pages whose only useful sentence is the
 
 ## Numbers are not integers
 
-**Observed 2026-09-25, and it breaks shipped code.** `registeredHoursTotal` came back as
-**`0.25`** — a quarter hour. The client declares it, and every sibling numeric, as Go `int`:
-
-| Field group | Declared | Files |
-|---|---|---|
-| `registeredHoursTotal`, `billedHours` | `int` | `cases.go:105-106,191-192`, `tasks.go:85-86,166-167` |
-| `cost`, `sales`, `result`, `invoiced`, `uninvoiced`, `realised` | `int` | `cases.go:99-104,185-190` |
-| `priceFixed` | `*int` | `tasks.go` |
-
-A decimal in any of them is a **decode failure, not a rounding error** — the read dies:
+**Observed 2026-09-25; fixed 2026-09-27.** `registeredHoursTotal` came back as **`0.25`** — a
+quarter hour. The client declared it, and every sibling hour and money field, as Go `int`, and a
+decimal in any of them was a **decode failure, not a rounding error** — the read died:
 
 ```
 json: cannot unmarshal number 0.25 into Go struct field
 wireTasksPage.items.0.registeredHoursTotal of type int
 ```
 
-`ListTasks` fails outright for such a case, so `kala_tasks` is broken for it today, and
-`kala_cases` and the `kala_case` resource are exposed on the same field via `wireCaseDetail`.
+One fractional value anywhere on a case took down the **entire** read for that case — `kala_tasks`,
+`kala_case`, `kala_cases` detail, and the `kala_case` resource's `Read`. It went unnoticed because no
+test fixture had ever carried a decimal.
 
-**Treat every Kala numeric as potentially fractional.** Hours are quarter-hours and money has
-decimals; only identifiers and counts are safe as integers.
+**The rule:** treat every Kala numeric as potentially fractional. Hours are quarter-hours and money
+has cents. Only **identifiers and counts** are safe as integers.
 
-Two ways out, and they are not equivalent. Truncating to `int` reports 0.25 hours as `0`, which is
-worse than failing. Decoding as `float64` is correct but changes `registered_hours_total` from
-`Int64` to `Float64` on two shipped data sources — a breaking schema change.
+| Field group | Declared now |
+|---|---|
+| `registeredHoursTotal`, `billedHours` (case and task) | `float64` |
+| `cost`, `sales`, `result`, `invoiced`, `uninvoiced`, `realised` | `float64` |
+| `priceFixed` (read and write) | `*float64` |
+| `caseTotalNormTime`, `caseTotalRegisteredHours` (task envelope) | **not declared** — never used, and a decode liability |
 
-**A reader who only needs some fields can sidestep this entirely:** `encoding/json` ignores fields
-absent from the target struct, so a narrow wire type that never declares the decimal-bearing field
-decodes the same payload successfully. Verified against the case that fails.
+**It was not a breaking change.** Earlier notes here and in the track that found the bug said
+moving `registered_hours_total` from `Int64` to `Float64` would break the schema. That was wrong:
+both are Terraform's single `number` type (`tftypes.Number`), so no configuration can observe the
+difference, the generated docs render both as `(Number)`, and state written under the `Int64`
+schema reads unchanged under `Float64`. An integral `float64` also marshals without a decimal
+point, so the write payload for an existing integer price is byte-identical. Each of those is
+pinned by a test.
+
+**Truncating would have been worse than failing:** it reports 0.25 hours as `0`, silently.
 
 ## Things that do not round-trip
 
