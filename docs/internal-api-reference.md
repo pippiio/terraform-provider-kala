@@ -79,13 +79,26 @@ Observed 2026-09-25. Alongside `caseId`, `restricted` and `checklistItemsTotal`,
 workersAssigned[0]: initials, isValidated, name, phone, title, workerImage, workerNr
 ```
 
-So the (worker, case) grant is readable in **one call**, without touching
+So the case's **assignments** are readable in one call, without touching
 `/Case/GetChecklistItemsPaged/` and without pagination — the items are embedded, not paged.
 `checklistItemsTotal` against `len(checklistItems)` is the completeness check, and it is
 self-describing: the payload states how many items exist.
 
-There is **no dedicated case-access field**. `projectRoles` exists and was empty in the tenant
-observed, so whether it is the real access model is unknown.
+**Assignment is not access.** Kala keeps a separate access list, found 2026-09-29 by capturing
+the UI's access panel:
+
+| Endpoint | Method | Keys on | Notes |
+|---|---|---|---|
+| `/api/GrantedWorkers/` | GET | `caseNr` (query) | `{"grantedWorkers":[<workerNr>…],"rolesEnabled":<bool>}` — plain numbers, no personal data. Unknown case → HTTP 500 |
+| `/api/GrantAccess/` | POST | `caseNr` (body) | `{"workerNumber":N,"caseNr":"…","access":<bool>,"role":[]}` — grant or revoke. A **write**; not used by the provider and not on ARCH1.3's list |
+
+The access list governs only a **restricted** case (`restricted` in the case detail); unrestricted
+cases observed have an empty list and everyone has access. On a restricted case an employee can be
+assigned to a task without being granted access — then they cannot see it. That state was found
+live on KA-2 after an access revocation left the assignment in place.
+
+`rolesEnabled` and `role:[]` suggest a per-case role model; `projectRoles` in the case detail was
+empty throughout, including on a restricted case. Unexplored.
 
 `workersAssigned` carries personal data — name, phone, title, image. Only `workerNr` may cross
 the client boundary (SEC1.5).

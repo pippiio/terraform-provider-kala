@@ -152,7 +152,7 @@ source.
 | `kala_customer` | data source | One customer by `id`, `number`, or `cvr` |
 | `kala_cases` | data source | List cases, active or archived |
 | `kala_case` | data source | One case by number, with the full detail record |
-| `kala_case_access` | data source | Which employees are granted access to a case — **derived, and incomplete by construction**; read [its limitation](#case-access-is-derived-and-incomplete-by-construction) first |
+| `kala_case_access` | data source | Who is granted access to a case, who is assigned to its tasks, and who is [assigned without access](#case-access-granted-and-assigned-are-different-lists) |
 | `kala_tasks` | data source | Tasks (checklist items) on one case |
 | `kala_task` | data source | One task by `id` or name |
 | `kala_customer` | resource | Create and update a customer |
@@ -294,37 +294,36 @@ Assignee filtering is applied **client-side**, because Kala accepts no assignee
 parameter. It narrows the result without reducing what was read, which is why
 `complete` still describes the read. Only the responsible worker
 (`respWorkerNr`) is matched. The `workersAssigned` collection is not exposed on
-`kala_tasks`; per case, it is what `kala_case_access` is derived from.
+`kala_tasks`; per case, `kala_case_access` reports it as `assigned_employee_numbers`.
 
-### Case access is derived, and incomplete by construction
+### Case access: granted and assigned are different lists
 
-`kala_case_access` reports which employees are granted access to a case. Its
-`employee_numbers` cannot be read directly — Kala has no endpoint for it — so it
-is derived from task assignment. In the development tenant, two of four cases
-had no tasks at all, so this is the common case rather than an edge case.
+Kala keeps two lists per case, and `kala_case_access` reports both:
 
-The wording below is the same text the data source's documentation carries,
-kept identical on purpose:
+- **`granted_employee_numbers`** — Kala's own access list: who may access the case, and so
+  register time on it, when the case is `restricted`.
+- **`assigned_employee_numbers`** — who is assigned to at least one of its tasks.
 
-> **This list is derived from task assignment, and it is incomplete by construction.**
->
-> Kala exposes no endpoint that reports who may register time on a case. `employee_numbers` is computed from the employees assigned to the case's individual tasks, which is the only readable source. None of what follows can be detected by this provider:
->
-> **A case with no tasks always reports an empty set**, however many employees have been granted access to it.
->
-> **An employee granted access but not assigned to any task on the case never appears.**
->
-> The set reports who has been *granted* access, not who is currently *able* to register time. A deactivated employee may remain in it, and will not resolve through `kala_employee`.
->
-> It covers access granted **on this case only**. It is not an effective-permission set: anyone who may register time through a role rather than a grant on this case is not included.
->
-> `restricted` does not resolve this. `restricted = false` means access is unrestricted, so the set says nothing at all. `restricted = true` with an empty set means **either** that nobody has been granted access **or** that those who have hold no tasks — the two are indistinguishable.
->
-> **Do not use this attribute as an authorization check.** It reports configuration for review; it does not decide access.
+**Being assigned does not grant access.** On a restricted case every assigned employee should
+also be granted, or they are assigned to tasks they cannot see. `assigned_without_access` lists
+exactly those employees, and is always empty on an unrestricted case, where everyone has access.
+Enforce the rule with a `check` block:
 
-The data source reads one endpoint and never writes. It detects the one
-incompleteness that *is* detectable — a response returning fewer checklist
-items than it says the case holds — and fails rather than report a short set.
+```hcl
+check "assignees_have_access" {
+  assert {
+    condition     = length(data.kala_case_access.roof.assigned_without_access) == 0
+    error_message = "Assigned without access: ${join(", ", data.kala_case_access.roof.assigned_without_access)}"
+  }
+}
+```
+
+It fires as a warning on `plan`. Found this way live on 2026-09-29: an employee whose access to a
+restricted case had been revoked was still assigned to its task.
+
+The data source reads two endpoints and never writes. An unreadable access list is an error,
+never an empty one — on a restricted case an empty list would say nobody has access. Per-case
+roles (Kala's `rolesEnabled`) are not reported.
 
 ### Identifiers do not interchange
 
@@ -333,7 +332,7 @@ items than it says the case holds — and fails rather than report a short set.
 | `kala_case.number` | string | e.g. `KA-1`. How a case is **addressed** |
 | `kala_case.id` | number | How a case is **referenced** by `kala_tasks.case_id` |
 | `kala_customer.number` | string | A **string** here; webapiv2 spells the same field as an integer, and the two are not known to hold the same value |
-| `kala_case_access.employee_numbers` | set of number | The same value as `kala_employee.employee_number` and `kala_employees.employees[*].number` — Kala's `workerNr`. Not `kala_employee.worker_id`, which maps a different upstream field that is only observed to be equal |
+| `kala_case_access.*_employee_numbers`, `assigned_without_access` | set of number | The same value as `kala_employee.employee_number` and `kala_employees.employees[*].number` — Kala's `workerNr`. Not `kala_employee.worker_id`, which maps a different upstream field that is only observed to be equal |
 
 `economy_case_number` mirrors `number` on every case observed, including
 Kala-native internal projects that have no e-conomic counterpart. Do not treat it

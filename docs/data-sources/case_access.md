@@ -3,72 +3,51 @@
 page_title: "kala_case_access Data Source - kala"
 subcategory: ""
 description: |-
-  Which employees are granted access to a Kala case — the employees who may register time against it through a grant on this case.
-  This list is derived from task assignment, and it is incomplete by construction.
-  Kala exposes no endpoint that reports who may register time on a case. employee_numbers is computed from the employees assigned to the case's individual tasks, which is the only readable source. None of what follows can be detected by this provider:
-  A case with no tasks always reports an empty set, however many employees have been granted access to it.
-  An employee granted access but not assigned to any task on the case never appears.
-  The set reports who has been granted access, not who is currently able to register time. A deactivated employee may remain in it, and will not resolve through kala_employee.
-  It covers access granted on this case only. It is not an effective-permission set: anyone who may register time through a role rather than a grant on this case is not included.
-  restricted does not resolve this. restricted = false means access is unrestricted, so the set says nothing at all. restricted = true with an empty set means either that nobody has been granted access or that those who have hold no tasks — the two are indistinguishable.
-  Do not use this attribute as an authorization check. It reports configuration for review; it does not decide access.
+  Who is granted access to a Kala case, and who is assigned to its tasks. Kala keeps these as two different lists, and this data source reports both.
+  granted_employee_numbers is Kala's own access list: the employees allowed to access the case, and so to register time on it, when the case is restricted. assigned_employee_numbers is the employees assigned to at least one of the case's tasks. Being assigned does not grant access.
+  On a restricted case every assigned employee should also be granted access; otherwise they are assigned to tasks they cannot see. assigned_without_access lists exactly those employees, so the rule can be enforced with a check block or a precondition.
+  This data source reads configuration. Kala enforces access.
 ---
 
 # kala_case_access (Data Source)
 
-Which employees are granted access to a Kala case — the employees who may register time against it through a grant on this case.
+Who is granted access to a Kala case, and who is assigned to its tasks. Kala keeps these as two different lists, and this data source reports both.
 
-**This list is derived from task assignment, and it is incomplete by construction.**
+`granted_employee_numbers` is Kala's own access list: the employees allowed to access the case, and so to register time on it, when the case is `restricted`. `assigned_employee_numbers` is the employees assigned to at least one of the case's tasks. Being assigned does not grant access.
 
-Kala exposes no endpoint that reports who may register time on a case. `employee_numbers` is computed from the employees assigned to the case's individual tasks, which is the only readable source. None of what follows can be detected by this provider:
+On a restricted case every assigned employee should also be granted access; otherwise they are assigned to tasks they cannot see. `assigned_without_access` lists exactly those employees, so the rule can be enforced with a `check` block or a precondition.
 
-**A case with no tasks always reports an empty set**, however many employees have been granted access to it.
-
-**An employee granted access but not assigned to any task on the case never appears.**
-
-The set reports who has been *granted* access, not who is currently *able* to register time. A deactivated employee may remain in it, and will not resolve through `kala_employee`.
-
-It covers access granted **on this case only**. It is not an effective-permission set: anyone who may register time through a role rather than a grant on this case is not included.
-
-`restricted` does not resolve this. `restricted = false` means access is unrestricted, so the set says nothing at all. `restricted = true` with an empty set means **either** that nobody has been granted access **or** that those who have hold no tasks — the two are indistinguishable.
-
-**Do not use this attribute as an authorization check.** It reports configuration for review; it does not decide access.
+This data source reads configuration. Kala enforces access.
 
 ## Example Usage
 
 ```terraform
-# Which employees are granted access to a case — and therefore may register
-# time on it.
+# Who is granted access to a case, and who is assigned to its tasks.
 #
-# READ THIS BEFORE USING THE RESULT. The set is derived from task assignment,
-# because Kala exposes nothing else. A case with no tasks ALWAYS reports an
-# empty set, however many people have access. It is a reporting aid for
-# reviewing configuration, not an authorization check.
+# Kala keeps these as two different lists. Being assigned to a task does not
+# grant access: on a restricted case, an employee assigned but not granted is
+# assigned to tasks they cannot see.
 
 data "kala_case_access" "roof" {
   case_number = kala_case.roof.number # the STRING number, not the integer id
 }
 
-# Read restricted and employee_numbers together. restricted = false means the
-# case is unrestricted and the set says nothing. restricted = true with an
-# empty set is ambiguous: nobody granted, or nobody granted holds a task.
 output "roof_access" {
   value = {
-    restricted       = data.kala_case_access.roof.restricted
-    employee_numbers = data.kala_case_access.roof.employee_numbers
+    restricted = data.kala_case_access.roof.restricted
+    granted    = data.kala_case_access.roof.granted_employee_numbers
+    assigned   = data.kala_case_access.roof.assigned_employee_numbers
   }
 }
 
-# The set is named to join. It holds who is GRANTED access, not who is able
-# to register: a deactivated employee may remain in it and will not resolve,
-# so read-only lookups like this one are the safe way to iterate it.
-data "kala_employees" "all" {}
-
-locals {
-  granted_names = [
-    for e in data.kala_employees.all.employees : e.name
-    if contains(data.kala_case_access.roof.employee_numbers, e.number)
-  ]
+# The rule, enforced: on a restricted case every assigned employee must also be
+# granted access. assigned_without_access is always empty on an unrestricted
+# case, so this check only ever fires where the rule applies.
+check "roof_assignees_have_access" {
+  assert {
+    condition     = length(data.kala_case_access.roof.assigned_without_access) == 0
+    error_message = "Assigned without access on case ${data.kala_case_access.roof.case_number}: employee number(s) ${join(", ", data.kala_case_access.roof.assigned_without_access)}. They cannot see the tasks they are assigned to."
+  }
 }
 ```
 
@@ -81,12 +60,8 @@ locals {
 
 ### Read-Only
 
+- `assigned_employee_numbers` (Set of Number) Employees assigned to at least one of this case's tasks. Assignment is not access: see `granted_employee_numbers`. A deactivated employee may remain assigned.
+- `assigned_without_access` (Set of Number) Employees assigned to a task on this case but not granted access to it — they cannot see the tasks they are assigned to. Computed only for a `restricted` case; always empty when `restricted` is `false`, because every employee then has access.
 - `case_id` (Number) Kala's integer id for the case. Join to `kala_task.case_id`.
-- `employee_numbers` (Set of Number) The employees granted access to this case specifically, derived from the employees assigned to its tasks — the only source Kala exposes.
-
-**Incomplete by construction, and undetectably so.** A case with no tasks always reports an empty set regardless of who has access, and an employee granted access without a task on the case never appears. Reports who is *granted* access, not who is *able* to register time: a deactivated employee may remain in the set and will not resolve through `kala_employee`, so take care iterating it with `for_each`. Grants on this case only — not an effective-permission set, so access held through a role is not included.
-
-Read together with `restricted`: `restricted = true` with an empty set means **either** that nobody is granted access **or** that nobody granted holds a task. **Not an authorization check.**
-- `restricted` (Boolean) Whether access to this case is limited at all. `false` means the case is **unrestricted**, and `employee_numbers` then says nothing about who may register time on it.
-
-Only meaningful read together with `employee_numbers` — and see that attribute for why an empty set is ambiguous even when this is `true`.
+- `granted_employee_numbers` (Set of Number) Employees granted access to this case — Kala's own access list. It governs access only when `restricted` is `true`; on an unrestricted case every employee has access, and the list has been observed empty. Per-case roles (Kala's `rolesEnabled`) are not reported.
+- `restricted` (Boolean) Whether access to the case is limited to `granted_employee_numbers`. `false` means every employee may access the case.
