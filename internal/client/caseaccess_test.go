@@ -121,8 +121,8 @@ func TestGetCaseAccess_ReadsGrantFromCaseDetail(t *testing.T) {
 	if !got.Restricted {
 		t.Error("Restricted = false, want true")
 	}
-	if len(got.EmployeeNumbers) != 1 || got.EmployeeNumbers[0] != 3 {
-		t.Errorf("EmployeeNumbers = %v, want [3]", got.EmployeeNumbers)
+	if len(got.Assigned) != 1 || got.Assigned[0] != 3 {
+		t.Errorf("Assigned = %v, want [3]", got.Assigned)
 	}
 
 	// One call. The grant is in the case detail, so there is nothing to follow up.
@@ -173,8 +173,8 @@ func TestGetCaseAccess_CarriesIdentifiersOnly(t *testing.T) {
 
 	// And prove the read actually produced something, so an empty result
 	// cannot satisfy the assertions above.
-	if len(got.EmployeeNumbers) == 0 {
-		t.Fatal("EmployeeNumbers is empty; the assertions above would pass trivially")
+	if len(got.Assigned) == 0 {
+		t.Fatal("Assigned is empty; the assertions above would pass trivially")
 	}
 }
 
@@ -199,12 +199,12 @@ func TestGetCaseAccess_DeduplicatesAndSorts(t *testing.T) {
 	}
 
 	want := []int64{3, 5, 9}
-	if len(got.EmployeeNumbers) != len(want) {
-		t.Fatalf("EmployeeNumbers = %v, want %v (deduplicated and sorted)", got.EmployeeNumbers, want)
+	if len(got.Assigned) != len(want) {
+		t.Fatalf("Assigned = %v, want %v (deduplicated and sorted)", got.Assigned, want)
 	}
 	for i, w := range want {
-		if got.EmployeeNumbers[i] != w {
-			t.Errorf("EmployeeNumbers[%d] = %d, want %d (got %v)", i, got.EmployeeNumbers[i], w, got.EmployeeNumbers)
+		if got.Assigned[i] != w {
+			t.Errorf("Assigned[%d] = %d, want %d (got %v)", i, got.Assigned[i], w, got.Assigned)
 		}
 	}
 }
@@ -260,8 +260,8 @@ func TestGetCaseAccess_DecodesFractionalNumerics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the narrow decode must survive a fractional numeric, got: %v", err)
 	}
-	if len(got.EmployeeNumbers) != 1 || got.EmployeeNumbers[0] != 3 {
-		t.Errorf("EmployeeNumbers = %v, want [3]", got.EmployeeNumbers)
+	if len(got.Assigned) != 1 || got.Assigned[0] != 3 {
+		t.Errorf("Assigned = %v, want [3]", got.Assigned)
 	}
 
 	// The other half of the guard: the shipped wide decode still fails on this

@@ -110,9 +110,9 @@ type caseAccessDataSource struct {
 type caseAccessDataSourceModel struct {
 	CaseNumber types.String `tfsdk:"case_number"`
 
-	CaseID          types.Int64 `tfsdk:"case_id"`
-	Restricted      types.Bool  `tfsdk:"restricted"`
-	EmployeeNumbers types.Set   `tfsdk:"employee_numbers"`
+	CaseID     types.Int64 `tfsdk:"case_id"`
+	Restricted types.Bool  `tfsdk:"restricted"`
+	Assigned   types.Set   `tfsdk:"employee_numbers"`
 }
 
 func (d *caseAccessDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -217,7 +217,7 @@ func (d *caseAccessDataSource) Read(ctx context.Context, req datasource.ReadRequ
 		"case_number": number,
 		"case_id":     access.CaseID,
 		"restricted":  access.Restricted,
-		"granted":     len(access.EmployeeNumbers),
+		"granted":     len(access.Assigned),
 	})
 
 	// No early return on these diagnostics, deliberately. Converting a []int64
@@ -225,13 +225,13 @@ func (d *caseAccessDataSource) Read(ctx context.Context, req datasource.ReadRequ
 	// untestable branch -- and it would be redundant anyway: the framework
 	// discards the state it is handed whenever the response carries an error
 	// diagnostic, so appending is enough for the failure to surface.
-	numbers, diags := types.SetValueFrom(ctx, types.Int64Type, access.EmployeeNumbers)
+	numbers, diags := types.SetValueFrom(ctx, types.Int64Type, access.Assigned)
 	resp.Diagnostics.Append(diags...)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &caseAccessDataSourceModel{
-		CaseNumber:      config.CaseNumber,
-		CaseID:          types.Int64Value(access.CaseID),
-		Restricted:      types.BoolValue(access.Restricted),
-		EmployeeNumbers: numbers,
+		CaseNumber: config.CaseNumber,
+		CaseID:     types.Int64Value(access.CaseID),
+		Restricted: types.BoolValue(access.Restricted),
+		Assigned:   numbers,
 	})...)
 }

@@ -115,7 +115,7 @@ func TestCaseAccessDataSource_SchemaShape(t *testing.T) {
 
 func TestCaseAccessRead_PopulatesState(t *testing.T) {
 	f := &caseAccessFake{access: client.CaseAccess{
-		CaseID: 2, Restricted: true, EmployeeNumbers: []int64{3, 5, 9},
+		CaseID: 2, Restricted: true, Assigned: []int64{3, 5, 9},
 	}}
 	resp := readCaseAccess(t, f, caseNumberConfig("KA-1"))
 
@@ -136,7 +136,7 @@ func TestCaseAccessRead_PopulatesState(t *testing.T) {
 	if !state.Restricted.ValueBool() {
 		t.Error("restricted = false, want true")
 	}
-	if got := len(state.EmployeeNumbers.Elements()); got != 3 {
+	if got := len(state.Assigned.Elements()); got != 3 {
 		t.Errorf("employee_numbers has %d elements, want 3", got)
 	}
 }
@@ -146,10 +146,10 @@ func TestCaseAccessRead_PopulatesState(t *testing.T) {
 // they mean a reordered response can never produce a plan diff (AC3).
 func TestCaseAccessRead_SetIgnoresUpstreamOrdering(t *testing.T) {
 	first := readCaseAccess(t, &caseAccessFake{
-		access: client.CaseAccess{CaseID: 2, EmployeeNumbers: []int64{3, 5, 9}},
+		access: client.CaseAccess{CaseID: 2, Assigned: []int64{3, 5, 9}},
 	}, caseNumberConfig("KA-1"))
 	second := readCaseAccess(t, &caseAccessFake{
-		access: client.CaseAccess{CaseID: 2, EmployeeNumbers: []int64{9, 3, 5}},
+		access: client.CaseAccess{CaseID: 2, Assigned: []int64{9, 3, 5}},
 	}, caseNumberConfig("KA-1"))
 
 	var a, b caseAccessDataSourceModel
@@ -159,9 +159,9 @@ func TestCaseAccessRead_SetIgnoresUpstreamOrdering(t *testing.T) {
 	if diags := second.State.Get(context.Background(), &b); diags.HasError() {
 		t.Fatalf("second state: %v", diags)
 	}
-	if !a.EmployeeNumbers.Equal(b.EmployeeNumbers) {
+	if !a.Assigned.Equal(b.Assigned) {
 		t.Errorf("the same members in a different order produced different state:\n%v\nvs\n%v",
-			a.EmployeeNumbers, b.EmployeeNumbers)
+			a.Assigned, b.Assigned)
 	}
 }
 

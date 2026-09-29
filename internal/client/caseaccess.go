@@ -21,7 +21,7 @@
 //      title and image; they are dropped HERE, at the boundary, so they cannot
 //      reach Terraform state or a log line (SEC1.5).
 //
-// Output: CaseAccess{CaseID, Restricted, EmployeeNumbers} -- unique and sorted.
+// Output: CaseAccess{CaseID, Restricted, Assigned} -- unique and sorted.
 //
 // WHAT THIS CANNOT SEE, and it is not a defect awaiting a fix:
 //
@@ -53,7 +53,7 @@ import (
 
 // CaseAccess reports which employees are granted access to one case.
 //
-// EmployeeNumbers carries `workerNr` values, which the provider surface spells
+// Assigned carries `workerNr` values, which the provider surface spells
 // `employee_number` -- medarbejderNr, workerNr and webapiv2's employeeNumber are
 // one value (ARCH1.9). Identifiers only: the upstream collection also holds
 // names, phone numbers, titles and image URLs, none of which cross this
@@ -62,11 +62,11 @@ type CaseAccess struct {
 	CaseID     int64
 	Restricted bool
 
-	// EmployeeNumbers is deduplicated and sorted ascending. Sorted in the
+	// Assigned is deduplicated and sorted ascending. Sorted in the
 	// client rather than left to the caller so the contract is deterministic:
 	// the provider layer turns it into an unordered set, but a client returning
 	// arbitrary order would make its own tests flaky.
-	EmployeeNumbers []int64
+	Assigned []int64
 }
 
 // wireCaseAccess is the NARROW decode of /api/GetJobDetailsAdvanced/.
@@ -166,8 +166,8 @@ func (c *internalAPI) GetCaseAccess(ctx context.Context, caseNumber string) (Cas
 	sort.Slice(numbers, func(i, j int) bool { return numbers[i] < numbers[j] })
 
 	return CaseAccess{
-		CaseID:          wire.CaseID,
-		Restricted:      wire.Restricted,
-		EmployeeNumbers: numbers,
+		CaseID:     wire.CaseID,
+		Restricted: wire.Restricted,
+		Assigned:   numbers,
 	}, nil
 }
