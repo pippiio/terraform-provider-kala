@@ -181,6 +181,11 @@ type InternalClient interface {
 	// is ever decoded on this path.
 	GetCaseAccess(ctx context.Context, caseNumber string) (CaseAccess, error)
 
+	// SetCaseAccess grants (true) or revokes (false) one employee's access to a
+	// case via POST /api/GrantAccess/, and verifies it by reading Kala's access
+	// list back. A write the read-back does not confirm is an error.
+	SetCaseAccess(ctx context.Context, caseNumber string, workerNr int64, granted bool) error
+
 	// SetCaseField sets one field on a case and verifies it by read-back.
 	//
 	// Reads the case first: every setter carries the value it expects to
