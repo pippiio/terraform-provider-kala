@@ -75,6 +75,10 @@ func newHeaderSpy(t *testing.T) *headerSpy {
 				_ = json.NewEncoder(w).Encode(map[string]any{"cases": []any{}, "totalCount": 0})
 			case strings.Contains(r.URL.Path, "GetJobDetailsAdvanced"):
 				_ = json.NewEncoder(w).Encode(map[string]any{"caseId": 1, "caseNumber": "KA-1"})
+			case strings.Contains(r.URL.Path, "GrantedWorkers"):
+				_ = json.NewEncoder(w).Encode(map[string]any{"grantedWorkers": []any{}, "rolesEnabled": false})
+			case strings.Contains(r.URL.Path, "GrantAccess"):
+				_, _ = w.Write([]byte(`{"status":"Success"}`))
 			default:
 				_ = json.NewEncoder(w).Encode(map[string]any{"customers": []any{}, "totalCount": 0})
 			}
@@ -110,6 +114,15 @@ func TestNewEndpoints_SendCompanyAndAuthHeaders(t *testing.T) {
 		"ListTasks": func(c InternalClient) error {
 			_, err := c.ListTasks(t.Context(), TaskQuery{CaseID: 2})
 			return err
+		},
+		"GetCaseAccess": func(c InternalClient) error {
+			_, err := c.GetCaseAccess(t.Context(), "KA-1")
+			return err
+		},
+		// A revoke, because the spy's access list is static and empty: a revoke
+		// can be confirmed against it, a grant could not.
+		"SetCaseAccess": func(c InternalClient) error {
+			return c.SetCaseAccess(t.Context(), "KA-1", 23, false)
 		},
 	}
 	for name, call := range calls {
@@ -152,6 +165,15 @@ func TestNewEndpoints_CredentialsNeverAppearInErrors(t *testing.T) {
 		"ListTasks": func(c InternalClient) error {
 			_, err := c.ListTasks(t.Context(), TaskQuery{CaseID: 2})
 			return err
+		},
+		"GetCaseAccess": func(c InternalClient) error {
+			_, err := c.GetCaseAccess(t.Context(), "KA-1")
+			return err
+		},
+		// A revoke, because the spy's access list is static and empty: a revoke
+		// can be confirmed against it, a grant could not.
+		"SetCaseAccess": func(c InternalClient) error {
+			return c.SetCaseAccess(t.Context(), "KA-1", 23, false)
 		},
 	}
 	for _, status := range []int{http.StatusInternalServerError, http.StatusBadRequest} {

@@ -138,6 +138,14 @@ func TestWireKeys_MocksDependOnKeysThatActuallyExist(t *testing.T) {
 			why:  "the per-item worker collection the grant is derived from",
 		},
 		{
+			name: "wireGrantAccessRequest",
+			typ:  wireGrantAccessRequest{},
+			// The body the Kala UI sends, captured 2026-09-29. workerNumber --
+			// not workerNr, which every other worker endpoint uses.
+			keys: []string{"workerNumber", "caseNr", "access", "role"},
+			why:  "the GrantAccess mock reads workerNumber and access from the body",
+		},
+		{
 			name: "wireGrantedWorkers",
 			typ:  wireGrantedWorkers{},
 			// Kala's access list for a case, observed 2026-09-29. If this key
