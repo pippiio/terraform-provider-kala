@@ -19,11 +19,55 @@
 
 package client
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"slices"
+)
+
+// wireGrantAccessRequest is the body the Kala UI sends to /api/GrantAccess/.
+// Role is always empty and must marshal as [] rather than null.
+type wireGrantAccessRequest struct {
+	WorkerNumber int64    `json:"workerNumber"`
+	CaseNr       string   `json:"caseNr"`
+	Access       bool     `json:"access"`
+	Role         []string `json:"role"`
+}
 
 // SetCaseAccess grants or revokes one employee's access to one case, and
 // verifies the result by reading Kala's access list back.
 func (c *internalAPI) SetCaseAccess(ctx context.Context, caseNumber string, workerNr int64, granted bool) error {
-	_, _, _, _ = ctx, caseNumber, workerNr, granted
-	return nil // TODO(task 1.2)
+	verb := "revoking"
+	if granted {
+		verb = "granting"
+	}
+
+	body, err := json.Marshal(wireGrantAccessRequest{
+		WorkerNumber: workerNr, CaseNr: caseNumber, Access: granted, Role: []string{},
+	})
+	if err != nil {
+		return fmt.Errorf("kala: encoding the access change for employee %d on case %q: %w", workerNr, caseNumber, err)
+	}
+
+	// A refusal (HTTP 200 + {"status":"Error"}) is already an error here: the
+	// shared request path applies errorEnvelope. Nothing is read back after
+	// one, so a stale list cannot make a refused write look confirmed.
+	if _, err := c.authedRequest(ctx, http.MethodPost, "/api/GrantAccess/", body, contentTypeHeader); err != nil {
+		return fmt.Errorf("kala: %s employee %d access to case %q: %w", verb, workerNr, caseNumber, err)
+	}
+
+	// ARCH1.8: the response to GrantAccess has not been characterised, so only
+	// the access list is evidence that the change landed.
+	list, err := c.grantedWorkers(ctx, caseNumber)
+	if err != nil {
+		return fmt.Errorf("kala: %s employee %d access to case %q was sent but could not be verified: %w",
+			verb, workerNr, caseNumber, err)
+	}
+	if slices.Contains(list, workerNr) != granted {
+		return fmt.Errorf("kala: %s employee %d access to case %q was not confirmed: "+
+			"the access list reads %v after the write", verb, workerNr, caseNumber, list)
+	}
+	return nil
 }
