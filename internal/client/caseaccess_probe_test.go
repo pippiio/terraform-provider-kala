@@ -285,7 +285,7 @@ func TestProbe_NarrowDecodeSurvivesDecimals(t *testing.T) {
 		narrow.CaseID)
 	t.Logf("  restricted=%t checklistItemsTotal=%d itemsReturned=%d",
 		narrow.Restricted, narrow.ChecklistItemsTotal, len(narrow.ChecklistItems))
-	t.Logf("  derived employee_numbers=%v", nrs)
+	t.Logf("  derived assigned set=%v", nrs)
 	if narrow.ChecklistItemsTotal != len(narrow.ChecklistItems) {
 		t.Logf("  NOTE: checklistItems is TRUNCATED (%d of %d) — the completeness check fires",
 			len(narrow.ChecklistItems), narrow.ChecklistItemsTotal)
