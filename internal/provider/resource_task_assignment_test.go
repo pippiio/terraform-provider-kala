@@ -616,3 +616,22 @@ func TestReadAssignment_AccessCheckFailureOnlyWarns(t *testing.T) {
 		t.Errorf("want a warning that access could not be checked; got %s", diagsText(resp.Diagnostics))
 	}
 }
+
+// On a WRITE the guard fails closed: if access cannot be checked, nothing is
+// changed. (Read is the opposite -- it only warns -- because it writes nothing.)
+func TestUpdateAssignment_UncheckableAccessChangesNothing(t *testing.T) {
+	fi := fakeWithTasks()
+	fi.getCaseAccessErr = errContext("GrantedWorkers unavailable")
+	r := newAssignmentResource(fi)
+	state, plan := existingAssignment(1), existingAssignment(2, 3)
+	resp := &resource.UpdateResponse{State: assignState(t, state)}
+	r.Update(context.Background(),
+		resource.UpdateRequest{Plan: assignPlan(t, plan), State: assignState(t, state)}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("an update whose access cannot be checked must fail")
+	}
+	if len(fi.ensureLinkCalls) != 0 || len(fi.setChecklistCalls) != 0 {
+		t.Errorf("nothing may be written: links %v, checklists %v", fi.ensureLinkCalls, fi.setChecklistCalls)
+	}
+}
