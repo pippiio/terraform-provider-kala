@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
@@ -61,50 +63,6 @@ func TestCaseAccessDataSource_Metadata(t *testing.T) {
 	}
 }
 
-// TestCaseAccessDataSource_SchemaShape covers AC2: the four attributes, their
-// types and their modes. Separate from the description assertions below, because
-// the shape and what it says about itself are different failures.
-func TestCaseAccessDataSource_SchemaShape(t *testing.T) {
-	sch := caseAccessSchema(t)
-
-	for _, tc := range []struct {
-		name     string
-		required bool
-		computed bool
-	}{
-		{"case_number", true, false},
-		{"case_id", false, true},
-		{"restricted", false, true},
-		{"employee_numbers", false, true},
-	} {
-		attr, ok := sch.Attributes[tc.name]
-		if !ok {
-			t.Errorf("schema is missing %s", tc.name)
-			continue
-		}
-		if attr.IsRequired() != tc.required {
-			t.Errorf("%s: IsRequired = %t, want %t", tc.name, attr.IsRequired(), tc.required)
-		}
-		if attr.IsComputed() != tc.computed {
-			t.Errorf("%s: IsComputed = %t, want %t", tc.name, attr.IsComputed(), tc.computed)
-		}
-	}
-
-	// employee_numbers must be a SET of int64, never a list. Upstream ordering
-	// is not guaranteed, and a list would report a diff on reordering alone.
-	attr, ok := sch.Attributes["employee_numbers"]
-	if !ok {
-		t.Fatal("schema is missing employee_numbers")
-	}
-	set, ok := attr.GetType().(basetypes.SetType)
-	if !ok {
-		t.Fatalf("employee_numbers is %T, want a set — a list diffs on reordering", attr.GetType())
-	}
-	if !set.ElementType().Equal(basetypes.Int64Type{}) {
-		t.Errorf("employee_numbers element type is %v, want int64", set.ElementType())
-	}
-}
-
 // --- Read -------------------------------------------------------------------
 //
 // NOTE ON TDD: Read was implemented during task 3.2, whose only failing test was
@@ -112,58 +70,6 @@ func TestCaseAccessDataSource_SchemaShape(t *testing.T) {
 // departure from this repository's strict TDD and is recorded as such in the
 // plan. Each one is checked to cover a branch that was otherwise uncovered, so
 // they are real tests written late rather than decoration.
-
-func TestCaseAccessRead_PopulatesState(t *testing.T) {
-	f := &caseAccessFake{access: client.CaseAccess{
-		CaseID: 2, Restricted: true, Assigned: []int64{3, 5, 9},
-	}}
-	resp := readCaseAccess(t, f, caseNumberConfig("KA-1"))
-
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("unexpected diagnostics: %v", resp.Diagnostics)
-	}
-	if f.gotNr != "KA-1" {
-		t.Errorf("client asked about %q, want KA-1", f.gotNr)
-	}
-
-	var state caseAccessDataSourceModel
-	if diags := resp.State.Get(context.Background(), &state); diags.HasError() {
-		t.Fatalf("reading state: %v", diags)
-	}
-	if state.CaseID.ValueInt64() != 2 {
-		t.Errorf("case_id = %d, want 2", state.CaseID.ValueInt64())
-	}
-	if !state.Restricted.ValueBool() {
-		t.Error("restricted = false, want true")
-	}
-	if got := len(state.Assigned.Elements()); got != 3 {
-		t.Errorf("employee_numbers has %d elements, want 3", got)
-	}
-}
-
-// A set must not care about upstream ordering. This is the provider-layer half
-// of the guarantee whose client-layer half is the client's own sort: together
-// they mean a reordered response can never produce a plan diff (AC3).
-func TestCaseAccessRead_SetIgnoresUpstreamOrdering(t *testing.T) {
-	first := readCaseAccess(t, &caseAccessFake{
-		access: client.CaseAccess{CaseID: 2, Assigned: []int64{3, 5, 9}},
-	}, caseNumberConfig("KA-1"))
-	second := readCaseAccess(t, &caseAccessFake{
-		access: client.CaseAccess{CaseID: 2, Assigned: []int64{9, 3, 5}},
-	}, caseNumberConfig("KA-1"))
-
-	var a, b caseAccessDataSourceModel
-	if diags := first.State.Get(context.Background(), &a); diags.HasError() {
-		t.Fatalf("first state: %v", diags)
-	}
-	if diags := second.State.Get(context.Background(), &b); diags.HasError() {
-		t.Fatalf("second state: %v", diags)
-	}
-	if !a.Assigned.Equal(b.Assigned) {
-		t.Errorf("the same members in a different order produced different state:\n%v\nvs\n%v",
-			a.Assigned, b.Assigned)
-	}
-}
 
 // An unknown case must never come back as an empty set. An empty set states
 // that nobody may register time on the case, which for a case that does not
@@ -265,109 +171,6 @@ func TestProvider_RegistersCaseAccessDataSource(t *testing.T) {
 	t.Error("kala_case_access is not registered in the provider's DataSources")
 }
 
-// --- The descriptions ARE the mitigation ------------------------------------
-//
-// employee_numbers is incomplete by construction and nothing can detect it: the
-// grant is only observable through task assignment, so a case with no tasks
-// reports empty however many people hold access. Two of the four cases in the
-// development tenant have no tasks, so this is the common case.
-//
-// There is no behavioural test that can fail when that misleads somebody. The
-// only protection a reader gets is that the schema says so, which makes these
-// assertions the sole mechanism preventing a later edit — a tidy-up, a
-// shortening, a translation — from silently removing the warning.
-//
-// The canonical wording lives in the track's spike-findings.md § Appendix.
-// Change it there first, then here.
-
-// TestCaseAccessSchema_WarnsAboutTheUndetectableGap covers AC6a.
-func TestCaseAccessSchema_WarnsAboutTheUndetectableGap(t *testing.T) {
-	sch := caseAccessSchema(t)
-
-	attr, ok := sch.Attributes["employee_numbers"]
-	if !ok {
-		t.Fatal("schema is missing employee_numbers")
-	}
-
-	// Both placements, because they are read in different situations: the data
-	// source's own description heads the generated docs page, while the
-	// attribute's reaches editor completion and the per-attribute table.
-	for name, desc := range map[string]string{
-		"the data source description":      sch.MarkdownDescription,
-		"the employee_numbers description": attr.GetMarkdownDescription(),
-	} {
-		lower := strings.ToLower(desc)
-		for _, want := range []string{
-			"derived",       // says where the value comes from
-			"no tasks",      // names the case that always reports empty
-			"empty",         // and what it reports
-			"authorization", // the one line a reader may act on
-		} {
-			if !strings.Contains(lower, want) {
-				t.Errorf("%s must mention %q — it is the only protection against a misread.\nGot: %s",
-					name, want, desc)
-			}
-		}
-	}
-}
-
-// TestCaseAccessSchema_SaysEmptyIsAmbiguousEvenWhenRestricted covers AC12 and
-// AC6b — two different ambiguities, and the second one derivation introduced.
-//
-// AC12: restricted = false means access is unrestricted, so the set says nothing
-// at all. AC6b: restricted = true with an empty set means EITHER nobody is
-// granted OR those granted hold no tasks, and the two are indistinguishable.
-// restricted alone therefore no longer resolves the empty set, which the original
-// design assumed it would.
-func TestCaseAccessSchema_SaysEmptyIsAmbiguousEvenWhenRestricted(t *testing.T) {
-	sch := caseAccessSchema(t)
-
-	restricted, ok := sch.Attributes["restricted"]
-	if !ok {
-		t.Fatal("schema is missing restricted")
-	}
-	employees, ok := sch.Attributes["employee_numbers"]
-	if !ok {
-		t.Fatal("schema is missing employee_numbers")
-	}
-
-	// restricted must point at employee_numbers, and say that false means the
-	// set is meaningless rather than empty.
-	rd := strings.ToLower(restricted.GetMarkdownDescription())
-	for _, want := range []string{"employee_numbers", "unrestricted"} {
-		if !strings.Contains(rd, want) {
-			t.Errorf("the restricted description must mention %q; got: %s", want, restricted.GetMarkdownDescription())
-		}
-	}
-
-	// employee_numbers must state the ambiguity that survives restricted = true.
-	ed := strings.ToLower(employees.GetMarkdownDescription())
-	for _, want := range []string{"restricted", "either"} {
-		if !strings.Contains(ed, want) {
-			t.Errorf("the employee_numbers description must mention %q so that an empty set under "+
-				"restricted = true is not read as \"nobody is granted\"; got: %s",
-				want, employees.GetMarkdownDescription())
-		}
-	}
-}
-
-// TestCaseAccessSchema_SaysGrantedNotAble covers F9: a deactivated employee may
-// remain in the grant and will not resolve through kala_employee, so anyone
-// iterating the set with for_each needs warning.
-func TestCaseAccessSchema_SaysGrantedNotAble(t *testing.T) {
-	attr, ok := caseAccessSchema(t).Attributes["employee_numbers"]
-	if !ok {
-		t.Fatal("schema is missing employee_numbers")
-	}
-	desc := strings.ToLower(attr.GetMarkdownDescription())
-	for _, want := range []string{"granted", "able"} {
-		if !strings.Contains(desc, want) {
-			t.Errorf("the description must distinguish who is %q from who is able to register; got: %s",
-				want, attr.GetMarkdownDescription())
-		}
-	}
-}
-
 // TestCaseAccessRead_MismatchedConfigSchemaIsReported covers the guard after
 // Config.Get. A config whose schema does not match the model is a provider bug
 // rather than a user error, and it must surface as a diagnostic instead of
@@ -394,33 +197,6 @@ func TestCaseAccessRead_MismatchedConfigSchemaIsReported(t *testing.T) {
 	}
 }
 
-// TestCaseAccessSchema_SaysCaseGrantsNotEffectivePermission covers AC10 and
-// decision D4. Without it the data source's opening line — "the employees who
-// may register time against it" — overclaims: anyone who may register time
-// through a role rather than a grant on this case is not in the set.
-//
-// Found by reading the generated docs page against AC10, which the other
-// wording tests did not cover.
-func TestCaseAccessSchema_SaysCaseGrantsNotEffectivePermission(t *testing.T) {
-	sch := caseAccessSchema(t)
-	attr, ok := sch.Attributes["employee_numbers"]
-	if !ok {
-		t.Fatal("schema is missing employee_numbers")
-	}
-	for name, desc := range map[string]string{
-		"the data source description":      sch.MarkdownDescription,
-		"the employee_numbers description": attr.GetMarkdownDescription(),
-	} {
-		lower := strings.ToLower(desc)
-		for _, want := range []string{"effective-permission", "role"} {
-			if !strings.Contains(lower, want) {
-				t.Errorf("%s must say the set is not an effective-permission set and excludes "+
-					"role-based access (missing %q).\nGot: %s", name, want, desc)
-			}
-		}
-	}
-}
-
 // TestCaseAccessSchema_LongFormHasNoList keeps the generated page's frontmatter
 // readable. tfplugindocs strips the markdown description into the frontmatter
 // summary, and it glues list items together with no space between them
@@ -433,5 +209,188 @@ func TestCaseAccessSchema_LongFormHasNoList(t *testing.T) {
 	if strings.Contains(caseAccessSchema(t).MarkdownDescription, "\n- ") {
 		t.Error("the data source description contains a markdown list; tfplugindocs glues list " +
 			"items together in the frontmatter summary. Use short paragraphs instead.")
+	}
+}
+
+// --- Schema -----------------------------------------------------------------
+
+func TestCaseAccessDataSource_SchemaShape(t *testing.T) {
+	sch := caseAccessSchema(t)
+
+	for _, tc := range []struct {
+		name     string
+		required bool
+	}{
+		{"case_number", true}, {"case_id", false}, {"restricted", false},
+		{"granted_employee_numbers", false}, {"assigned_employee_numbers", false},
+		{"assigned_without_access", false},
+	} {
+		attr, ok := sch.Attributes[tc.name]
+		if !ok {
+			t.Errorf("schema is missing %s", tc.name)
+			continue
+		}
+		if attr.IsRequired() != tc.required || attr.IsComputed() == tc.required {
+			t.Errorf("%s: required=%t computed=%t, want required=%t", tc.name,
+				attr.IsRequired(), attr.IsComputed(), tc.required)
+		}
+	}
+
+	// The three lists are SETS of int64: upstream order is not guaranteed, and a
+	// list would diff on reordering alone.
+	for _, name := range []string{"granted_employee_numbers", "assigned_employee_numbers", "assigned_without_access"} {
+		attr, ok := sch.Attributes[name]
+		if !ok {
+			continue
+		}
+		set, ok := attr.GetType().(basetypes.SetType)
+		if !ok || !set.ElementType().Equal(basetypes.Int64Type{}) {
+			t.Errorf("%s is %v, want a set of int64", name, attr.GetType())
+		}
+	}
+
+	// The old attribute conflated the two lists. It must not come back.
+	if _, ok := sch.Attributes["employee_numbers"]; ok {
+		t.Error("employee_numbers must not exist: it reported ASSIGNED employees as having access")
+	}
+}
+
+// --- Read: the two lists and the rule between them --------------------------
+
+func readCaseAccessState(t *testing.T, access client.CaseAccess) caseAccessDataSourceModel {
+	t.Helper()
+	resp := readCaseAccess(t, &caseAccessFake{access: access}, caseNumberConfig("KA-2"))
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", resp.Diagnostics)
+	}
+	var m caseAccessDataSourceModel
+	if diags := resp.State.Get(context.Background(), &m); diags.HasError() {
+		t.Fatalf("reading state: %v", diags)
+	}
+	return m
+}
+
+func setOf(t *testing.T, v types.Set) []int64 {
+	t.Helper()
+	var out []int64
+	if diags := v.ElementsAs(context.Background(), &out, false); diags.HasError() {
+		t.Fatalf("set elements: %v", diags)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+func equalInts(a, b []int64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// Case KA-2 exactly as found live on 2026-09-29: restricted, employee 23 still
+// assigned after his access was revoked.
+func TestCaseAccessRead_KA2_AssignedWithoutAccessIsReported(t *testing.T) {
+	m := readCaseAccessState(t, client.CaseAccess{
+		CaseID: 2, Restricted: true, Granted: []int64{1}, Assigned: []int64{1, 23},
+	})
+
+	if m.CaseID.ValueInt64() != 2 || !m.Restricted.ValueBool() {
+		t.Errorf("case_id/restricted = %d/%t, want 2/true", m.CaseID.ValueInt64(), m.Restricted.ValueBool())
+	}
+	for _, tc := range []struct {
+		name string
+		got  types.Set
+		want []int64
+	}{
+		{"granted_employee_numbers", m.GrantedEmployeeNumbers, []int64{1}},
+		{"assigned_employee_numbers", m.AssignedEmployeeNumbers, []int64{1, 23}},
+		{"assigned_without_access", m.AssignedWithoutAccess, []int64{23}},
+	} {
+		if got := setOf(t, tc.got); !equalInts(got, tc.want) {
+			t.Errorf("%s = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// Case KA-4 as found live: unrestricted, nobody on the access list, one employee
+// assigned. On an unrestricted case every employee has access, so nobody is
+// assigned WITHOUT it -- reporting 1 here would be a false alarm.
+func TestCaseAccessRead_UnrestrictedCaseHasNobodyWithoutAccess(t *testing.T) {
+	m := readCaseAccessState(t, client.CaseAccess{
+		CaseID: 4, Restricted: false, Granted: []int64{}, Assigned: []int64{1},
+	})
+	if got := setOf(t, m.AssignedWithoutAccess); len(got) != 0 {
+		t.Errorf("assigned_without_access = %v, want empty on an unrestricted case", got)
+	}
+	if got := setOf(t, m.AssignedEmployeeNumbers); !equalInts(got, []int64{1}) {
+		t.Errorf("assigned_employee_numbers = %v, want [1]", got)
+	}
+}
+
+// Granted but not assigned is fine: access without a task is normal.
+func TestCaseAccessRead_GrantedWithoutAssignmentIsNotAFinding(t *testing.T) {
+	m := readCaseAccessState(t, client.CaseAccess{
+		CaseID: 2, Restricted: true, Granted: []int64{1, 5, 23}, Assigned: []int64{1},
+	})
+	if got := setOf(t, m.AssignedWithoutAccess); len(got) != 0 {
+		t.Errorf("assigned_without_access = %v, want empty", got)
+	}
+	if got := setOf(t, m.GrantedEmployeeNumbers); !equalInts(got, []int64{1, 5, 23}) {
+		t.Errorf("granted_employee_numbers = %v, want [1 5 23]", got)
+	}
+}
+
+// Sets must not care about upstream ordering (AC3).
+func TestCaseAccessRead_SetsIgnoreUpstreamOrdering(t *testing.T) {
+	a := readCaseAccessState(t, client.CaseAccess{CaseID: 2, Restricted: true,
+		Granted: []int64{1, 5}, Assigned: []int64{1, 9, 23}})
+	b := readCaseAccessState(t, client.CaseAccess{CaseID: 2, Restricted: true,
+		Granted: []int64{5, 1}, Assigned: []int64{23, 1, 9}})
+	if !a.GrantedEmployeeNumbers.Equal(b.GrantedEmployeeNumbers) ||
+		!a.AssignedEmployeeNumbers.Equal(b.AssignedEmployeeNumbers) ||
+		!a.AssignedWithoutAccess.Equal(b.AssignedWithoutAccess) {
+		t.Error("the same members in a different order produced different state")
+	}
+}
+
+// --- Descriptions: the two concepts must not be conflated again --------------
+
+func TestCaseAccessSchema_SaysAssignmentIsNotAccess(t *testing.T) {
+	sch := caseAccessSchema(t)
+	ds := strings.ToLower(sch.MarkdownDescription)
+	for _, want := range []string{"granted", "assigned", "different"} {
+		if !strings.Contains(ds, want) {
+			t.Errorf("the data source description must mention %q; got: %s", want, sch.MarkdownDescription)
+		}
+	}
+	a := strings.ToLower(sch.Attributes["assigned_employee_numbers"].GetMarkdownDescription())
+	if !strings.Contains(a, "not access") {
+		t.Errorf("assigned_employee_numbers must say assignment is not access; got: %s", a)
+	}
+}
+
+func TestCaseAccessSchema_GrantedGovernsOnlyWhenRestricted(t *testing.T) {
+	sch := caseAccessSchema(t)
+	g := strings.ToLower(sch.Attributes["granted_employee_numbers"].GetMarkdownDescription())
+	if !strings.Contains(g, "restricted") {
+		t.Errorf("granted_employee_numbers must say it governs access only when restricted; got: %s", g)
+	}
+	r := strings.ToLower(sch.Attributes["restricted"].GetMarkdownDescription())
+	if !strings.Contains(r, "granted_employee_numbers") {
+		t.Errorf("restricted must point at granted_employee_numbers; got: %s", r)
+	}
+}
+
+func TestCaseAccessSchema_WithoutAccessStatesItsRule(t *testing.T) {
+	d := strings.ToLower(caseAccessSchema(t).Attributes["assigned_without_access"].GetMarkdownDescription())
+	for _, want := range []string{"restricted", "cannot see", "empty"} {
+		if !strings.Contains(d, want) {
+			t.Errorf("assigned_without_access must mention %q; got: %s", want, d)
+		}
 	}
 }
