@@ -334,16 +334,25 @@ func (f *fakeInternal) GetCase(_ context.Context, caseNumber string) (client.Cas
 	return d, nil
 }
 
-// GetCaseAccess is served from its own map rather than derived from f.cases.
-// The real client reads the same endpoint as GetCase but decodes it separately
-// and narrowly, so the two can fail independently -- as they did until
-// 2026-09-27, when GetCase could not decode a case with fractional hours and
-// GetCaseAccess could. A fake computing one from the other would hide that.
+// accessFor answers from f.caseAccess when a test configured access explicitly,
+// and otherwise derives it from f.cases: a case that exists but was given no
+// access setup is UNRESTRICTED with nobody on its access list -- Kala's default.
+// That keeps every test written before access existed meaning what it meant.
+func (f *fakeInternal) accessFor(caseNumber string) (client.CaseAccess, bool) {
+	if a, ok := f.caseAccess[caseNumber]; ok {
+		return a, true
+	}
+	if d, ok := f.cases[caseNumber]; ok {
+		return client.CaseAccess{CaseID: d.ID, Restricted: d.Restricted}, true
+	}
+	return client.CaseAccess{}, false
+}
+
 func (f *fakeInternal) GetCaseAccess(_ context.Context, caseNumber string) (client.CaseAccess, error) {
 	if f.getCaseAccessErr != nil {
 		return client.CaseAccess{}, f.getCaseAccessErr
 	}
-	a, ok := f.caseAccess[caseNumber]
+	a, ok := f.accessFor(caseNumber)
 	if !ok {
 		return client.CaseAccess{}, fmt.Errorf("case %s: %w", caseNumber, client.ErrNotFound)
 	}
@@ -358,7 +367,7 @@ func (f *fakeInternal) SetCaseAccess(_ context.Context, caseNumber string, worke
 	if f.caseAccess == nil {
 		f.caseAccess = map[string]client.CaseAccess{}
 	}
-	a := f.caseAccess[caseNumber]
+	a, _ := f.accessFor(caseNumber)
 	kept := a.Granted[:0:0]
 	for _, nr := range a.Granted {
 		if nr != workerNr {
