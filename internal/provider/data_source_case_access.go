@@ -61,7 +61,16 @@ func (d *caseAccessDataSource) Schema(_ context.Context, _ datasource.SchemaRequ
 		return schema.SetAttribute{Computed: true, ElementType: types.Int64Type, MarkdownDescription: desc}
 	}
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Who is granted access to a Kala case, and who is assigned to its tasks.",
+		MarkdownDescription: "Who is granted access to a Kala case, and who is assigned to its tasks. " +
+			"Kala keeps these as two different lists, and this data source reports both.\n\n" +
+			"`granted_employee_numbers` is Kala's own access list: the employees allowed to access the " +
+			"case, and so to register time on it, when the case is `restricted`. " +
+			"`assigned_employee_numbers` is the employees assigned to at least one of the case's tasks. " +
+			"Being assigned does not grant access.\n\n" +
+			"On a restricted case every assigned employee should also be granted access; otherwise they " +
+			"are assigned to tasks they cannot see. `assigned_without_access` lists exactly those " +
+			"employees, so the rule can be enforced with a `check` block or a precondition.\n\n" +
+			"This data source reads configuration. Kala enforces access.",
 		Attributes: map[string]schema.Attribute{
 			"case_number": schema.StringAttribute{
 				Required: true,
@@ -72,10 +81,22 @@ func (d *caseAccessDataSource) Schema(_ context.Context, _ datasource.SchemaRequ
 				Computed:            true,
 				MarkdownDescription: "Kala's integer id for the case. Join to `kala_task.case_id`.",
 			},
-			"restricted":                schema.BoolAttribute{Computed: true, MarkdownDescription: "Whether access to the case is restricted."},
-			"granted_employee_numbers":  set("Employees granted access."),
-			"assigned_employee_numbers": set("Employees assigned to its tasks."),
-			"assigned_without_access":   set("Assigned but not granted."),
+			"restricted": schema.BoolAttribute{
+				Computed: true,
+				MarkdownDescription: "Whether access to the case is limited to `granted_employee_numbers`. " +
+					"`false` means every employee may access the case.",
+			},
+			"granted_employee_numbers": set("Employees granted access to this case — Kala's own access " +
+				"list. It governs access only when `restricted` is `true`; on an unrestricted case every " +
+				"employee has access, and the list has been observed empty. Per-case roles (Kala's " +
+				"`rolesEnabled`) are not reported."),
+			"assigned_employee_numbers": set("Employees assigned to at least one of this case's tasks. " +
+				"Assignment is not access: see `granted_employee_numbers`. A deactivated employee may " +
+				"remain assigned."),
+			"assigned_without_access": set("Employees assigned to a task on this case but not granted " +
+				"access to it — they cannot see the tasks they are assigned to. Computed only for a " +
+				"`restricted` case; always empty when `restricted` is `false`, because every employee " +
+				"then has access."),
 		},
 	}
 }
@@ -135,8 +156,8 @@ func (d *caseAccessDataSource) Read(ctx context.Context, req datasource.ReadRequ
 		}
 		resp.Diagnostics.AddError(
 			"Could not read Kala case access",
-			"The Kala API returned an error while reading which employees may register time on "+
-				"case "+number+".\n\nError: "+err.Error(),
+			"The Kala API returned an error while reading who is granted access to, or assigned "+
+				"on, case "+number+".\n\nError: "+err.Error(),
 		)
 		return
 	}
@@ -150,16 +171,35 @@ func (d *caseAccessDataSource) Read(ctx context.Context, req datasource.ReadRequ
 		"assigned":    len(access.Assigned),
 	})
 
-	// SKELETON (task: granted list): granted and assigned_without_access are
-	// empty until the failing tests drive them.
 	resp.Diagnostics.Append(resp.State.Set(ctx, &caseAccessDataSourceModel{
 		CaseNumber:              config.CaseNumber,
 		CaseID:                  types.Int64Value(access.CaseID),
 		Restricted:              types.BoolValue(access.Restricted),
-		GrantedEmployeeNumbers:  int64Set(ctx, resp, nil),
+		GrantedEmployeeNumbers:  int64Set(ctx, resp, access.Granted),
 		AssignedEmployeeNumbers: int64Set(ctx, resp, access.Assigned),
-		AssignedWithoutAccess:   int64Set(ctx, resp, nil),
+		AssignedWithoutAccess:   int64Set(ctx, resp, assignedWithoutAccess(access)),
 	})...)
+}
+
+// assignedWithoutAccess applies the rule: on a RESTRICTED case, an employee
+// assigned to a task must also be granted access, or they cannot see the task.
+// On an unrestricted case everyone has access, so nobody is without it -- an
+// assignment there is not a finding, however empty the access list is.
+func assignedWithoutAccess(a client.CaseAccess) []int64 {
+	if !a.Restricted {
+		return nil
+	}
+	granted := make(map[int64]bool, len(a.Granted))
+	for _, nr := range a.Granted {
+		granted[nr] = true
+	}
+	var out []int64
+	for _, nr := range a.Assigned {
+		if !granted[nr] {
+			out = append(out, nr)
+		}
+	}
+	return out
 }
 
 // int64Set converts a slice into a set of int64.

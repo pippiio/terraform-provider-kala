@@ -99,8 +99,8 @@ data "kala_case_access" "test" {
 
 # Surfaced as an output so that an unstable read -- the same members in a
 # different order, say -- would show up as a non-empty second plan.
-output "employee_numbers" {
-  value = data.kala_case_access.test.employee_numbers
+output "assigned_without_access" {
+  value = data.kala_case_access.test.assigned_without_access
 }
 `, caseNumber)
 }
@@ -112,21 +112,39 @@ func TestAccCaseAccess_matchesTheTaskList(t *testing.T) {
 	accCaseAccessPreCheck(t)
 
 	number, want := accCaseWithAssignments(t)
-	t.Logf("verifying case %s, whose task list assigns %v", number, want)
 
+	// The access list and the restricted flag, read live. The access list has
+	// only one source, so it is read through the client; what this test proves
+	// for it is that the PROVIDER maps it and applies the rule correctly.
+	live, err := accInternalClient(t).GetCaseAccess(context.Background(), number)
+	if err != nil {
+		t.Fatalf("reading case %s through the client: %v", number, err)
+	}
+	var without []int64
+	if live.Restricted {
+		granted := map[int64]bool{}
+		for _, nr := range live.Granted {
+			granted[nr] = true
+		}
+		for _, nr := range want {
+			if !granted[nr] {
+				without = append(without, nr)
+			}
+		}
+	}
+	t.Logf("verifying case %s: restricted=%t, task list assigns %v, granted %v, so without access %v",
+		number, live.Restricted, want, live.Granted, without)
+
+	const ds = "data.kala_case_access.test"
 	checks := []resource.TestCheckFunc{
-		resource.TestCheckResourceAttr("data.kala_case_access.test", "case_number", number),
-		resource.TestCheckResourceAttrSet("data.kala_case_access.test", "case_id"),
-		resource.TestCheckResourceAttrSet("data.kala_case_access.test", "restricted"),
-		// EQUAL to the task list's set, not merely non-empty: two endpoints,
-		// one answer.
-		resource.TestCheckResourceAttr("data.kala_case_access.test",
-			"employee_numbers.#", strconv.Itoa(len(want))),
+		resource.TestCheckResourceAttr(ds, "case_number", number),
+		resource.TestCheckResourceAttrSet(ds, "case_id"),
+		resource.TestCheckResourceAttr(ds, "restricted", strconv.FormatBool(live.Restricted)),
 	}
-	for _, nr := range want {
-		checks = append(checks, resource.TestCheckTypeSetElemAttr(
-			"data.kala_case_access.test", "employee_numbers.*", strconv.FormatInt(nr, 10)))
-	}
+	// assigned EQUAL to the task list's set -- two endpoints, one answer.
+	checks = append(checks, setChecks(ds, "assigned_employee_numbers", want)...)
+	checks = append(checks, setChecks(ds, "granted_employee_numbers", live.Granted)...)
+	checks = append(checks, setChecks(ds, "assigned_without_access", without)...)
 
 	resource.Test(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
@@ -160,4 +178,15 @@ func TestAccCaseAccess_unknownCaseIsAnError(t *testing.T) {
 			ExpectError: regexp.MustCompile(`Case not found`),
 		}},
 	})
+}
+
+// setChecks asserts a set attribute holds exactly want: its size, and each member.
+func setChecks(ds, attr string, want []int64) []resource.TestCheckFunc {
+	out := []resource.TestCheckFunc{
+		resource.TestCheckResourceAttr(ds, attr+".#", strconv.Itoa(len(want))),
+	}
+	for _, nr := range want {
+		out = append(out, resource.TestCheckTypeSetElemAttr(ds, attr+".*", strconv.FormatInt(nr, 10)))
+	}
+	return out
 }
