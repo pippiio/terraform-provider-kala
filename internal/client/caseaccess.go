@@ -1,42 +1,39 @@
-// Story: Case access — who may register time on a case
+// Story: Case access — who is granted access to a case, and who is assigned to it
 //
-// Input:  a case NUMBER (string, e.g. "KA-1") — the identifier every case write
-//         keys on and the one kala_case exposes as `number`.
+// Kala keeps TWO lists per case, and they are different things:
+//
+//   - GRANTED: employees allowed to access the case -- Kala's own access list,
+//     GET /api/GrantedWorkers/. This is who may register time on a restricted
+//     case.
+//   - ASSIGNED: employees assigned to at least one of the case's tasks
+//     (checklistItems[].workersAssigned in the case detail).
+//
+// On a restricted case every assigned employee should also be granted, or they
+// cannot see the tasks they are assigned to. Case KA-2 was found live on
+// 2026-09-29 with that broken -- employee 23 assigned, access revoked -- after
+// an earlier version of this file had reported the ASSIGNED set as access and
+// so kept showing 23 as having it.
+//
+// Input:  a case NUMBER (string, e.g. "KA-1").
 // Process:
-//   1. GET /api/GetJobDetailsAdvanced/?caseNr= ONCE. That single response
-//      carries everything needed: caseId, restricted, checklistItemsTotal, and
-//      checklistItems[] where each item carries workersAssigned[].
-//   2. Decode with a NARROW wire type declaring only those four things.
-//      Deliberately NOT wireCaseDetail and NOT ListTasks: both declare Kala
-//      numerics as int, and Kala returns decimals -- registeredHoursTotal was
-//      observed as 0.25 -- so both are broken decodes for such a case.
-//      encoding/json ignores absent fields, which makes a narrow type immune.
-//      Verified against the failing case before this file existed.
-//   3. Verify completeness: len(checklistItems) against checklistItemsTotal.
-//      A mismatch is an error naming BOTH numbers, never a short set. This is
-//      the only incompleteness that can be detected at all.
-//   4. Union workersAssigned[].workerNr across items into a deduplicated,
-//      sorted set. A worker on five items appears five times upstream.
-//   5. Carry identifiers ONLY. The upstream collection also holds name, phone,
-//      title and image; they are dropped HERE, at the boundary, so they cannot
-//      reach Terraform state or a log line (SEC1.5).
-//
-// Output: CaseAccess{CaseID, Restricted, Assigned} -- unique and sorted.
-//
-// WHAT THIS CANNOT SEE, and it is not a defect awaiting a fix:
-//
-//	Kala exposes no endpoint reporting who may register time on a case. The
-//	grant is observable only through task assignment, so an employee granted
-//	access with no task on the case is INVISIBLE, and a case with no tasks
-//	reports empty however many people hold access. Two of the four cases in the
-//	development tenant have zero tasks, so this is the common case, not a
-//	corner. No assertion can detect it. The entire mitigation lives in the
-//	provider layer's attribute descriptions -- read the appendix in
-//	draft/tracks/case-time-registration-access/spike-findings.md before changing
-//	any of that wording.
+//   1. GET /api/GetJobDetailsAdvanced/?caseNr= -- caseId, restricted,
+//      checklistItemsTotal, and checklistItems[].workersAssigned[]. This read
+//      also establishes that the case exists; if it fails, stop.
+//   2. Decode it with a NARROW wire type: those four things only. The wide
+//      wireCaseDetail carries commercial figures, and the worker element carries
+//      names and phone numbers; neither is needed, so neither is decoded.
+//   3. Verify len(checklistItems) against checklistItemsTotal. A mismatch is an
+//      error naming both numbers, never a short set.
+//   4. GET /api/GrantedWorkers/?caseNr= -- {"grantedWorkers":[<workerNr>...]}.
+//      Plain numbers: no personal data on this path at all.
+//   5. An unreadable access list is an ERROR, never an empty list: on a
+//      restricted case an empty list says nobody has access.
+// Output: CaseAccess{CaseID, Restricted, Assigned, Granted} -- each list unique
+//         and sorted.
 //
 // Dependencies: internalAPI.authedRequest, ErrNotFound, ErrServer, ErrDecode.
-// Side effects: outbound HTTPS read only. Nothing is written.
+// Side effects: outbound HTTPS reads only. Nothing is written. (Kala's write for
+//               this list, POST /api/GrantAccess/, is not used here.)
 
 package client
 
@@ -51,7 +48,7 @@ import (
 	"sort"
 )
 
-// CaseAccess reports which employees are granted access to one case.
+// CaseAccess reports, for one case, who is granted access and who is assigned.
 //
 // Assigned carries `workerNr` values, which the provider surface spells
 // `employee_number` -- medarbejderNr, workerNr and webapiv2's employeeNumber are
@@ -103,7 +100,19 @@ type wireCaseAccessWorker struct {
 	WorkerNr int64 `json:"workerNr"`
 }
 
-// GetCaseAccess reads the access grant for one case by its case NUMBER.
+// wireGrantedWorkers is GET /api/GrantedWorkers/, observed 2026-09-29 as
+// {"grantedWorkers":[<workerNr>...],"rolesEnabled":<bool>}.
+//
+// A POINTER, so an absent key is distinguishable from an empty list. If Kala
+// ever renamed the key, a plain slice would decode to empty and report that
+// nobody has access; this way it is an error. rolesEnabled is not declared:
+// nothing here uses it.
+type wireGrantedWorkers struct {
+	GrantedWorkers *[]int64 `json:"grantedWorkers"`
+}
+
+// GetCaseAccess reads, for one case by its case NUMBER, who is granted access and
+// who is assigned to its tasks.
 func (c *internalAPI) GetCaseAccess(ctx context.Context, caseNumber string) (CaseAccess, error) {
 	params := url.Values{}
 	params.Set("caseNr", caseNumber)
@@ -153,25 +162,72 @@ func (c *internalAPI) GetCaseAccess(ctx context.Context, caseNumber string) (Cas
 			caseNumber, got, want)
 	}
 
-	// A job link is shared per (worker, case), so a worker assigned to five of
-	// the case's items appears five times here. Dedupe, then sort: the provider
-	// layer turns this into an unordered set, but an arbitrary order would make
-	// this package's own tests flaky.
-	seen := make(map[int64]struct{}, len(wire.ChecklistItems))
+	// A job link is shared per (worker, case), so an employee assigned to five
+	// of the case's items appears five times here.
+	var assigned []int64
 	for _, item := range wire.ChecklistItems {
 		for _, w := range item.WorkersAssigned {
-			seen[w.WorkerNr] = struct{}{}
+			assigned = append(assigned, w.WorkerNr)
 		}
 	}
-	numbers := make([]int64, 0, len(seen))
-	for nr := range seen {
-		numbers = append(numbers, nr)
+
+	// Only now, with the case known to exist, ask for its access list.
+	granted, err := c.grantedWorkers(ctx, caseNumber)
+	if err != nil {
+		return CaseAccess{}, err
 	}
-	sort.Slice(numbers, func(i, j int) bool { return numbers[i] < numbers[j] })
 
 	return CaseAccess{
 		CaseID:     wire.CaseID,
 		Restricted: wire.Restricted,
-		Assigned:   numbers,
+		Assigned:   uniqueSorted(assigned),
+		Granted:    uniqueSorted(granted),
 	}, nil
+}
+
+// grantedWorkers reads Kala's access list for a case that is already known to
+// exist. Every way of failing to read it is an error, and none is not-found: an
+// empty list would state that nobody has access.
+func (c *internalAPI) grantedWorkers(ctx context.Context, caseNumber string) ([]int64, error) {
+	params := url.Values{}
+	params.Set("caseNr", caseNumber)
+
+	raw, err := c.authedRequest(
+		ctx, http.MethodGet, "/api/GrantedWorkers/?"+params.Encode(), nil, contentTypeHeader)
+	if err != nil {
+		// Deliberately NOT translated to ErrNotFound, unlike the detail read:
+		// the case exists, so a 500 here is Kala failing, not absence.
+		return nil, fmt.Errorf("kala: reading the access list of case %q: %w", caseNumber, err)
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return nil, fmt.Errorf("%w: case %q returned an empty access-list response; "+
+			"refusing to report that nobody has access", ErrDecode, caseNumber)
+	}
+
+	var wire wireGrantedWorkers
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return nil, fmt.Errorf("%w: access list of case %q: %v", ErrDecode, caseNumber, err)
+	}
+	if wire.GrantedWorkers == nil {
+		return nil, fmt.Errorf("%w: access list of case %q has no grantedWorkers key; "+
+			"refusing to report that nobody has access", ErrDecode, caseNumber)
+	}
+	return *wire.GrantedWorkers, nil
+}
+
+// uniqueSorted deduplicates and sorts ascending. Sorted in the client rather
+// than left to the caller so its contract is deterministic: the provider turns
+// these into unordered sets, but arbitrary order would make tests flaky.
+func uniqueSorted(in []int64) []int64 {
+	seen := make(map[int64]struct{}, len(in))
+	out := make([]int64, 0, len(in))
+	for _, v := range in {
+		if _, dup := seen[v]; dup {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
 }

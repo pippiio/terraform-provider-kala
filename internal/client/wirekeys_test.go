@@ -138,6 +138,16 @@ func TestWireKeys_MocksDependOnKeysThatActuallyExist(t *testing.T) {
 			why:  "the per-item worker collection the grant is derived from",
 		},
 		{
+			name: "wireGrantedWorkers",
+			typ:  wireGrantedWorkers{},
+			// Kala's access list for a case, observed 2026-09-29. If this key
+			// changes, the client errors rather than reporting nobody as
+			// granted -- but only because the field is a pointer; this entry
+			// keeps the mock spelling honest.
+			keys: []string{"grantedWorkers"},
+			why:  "the case access list (GET /api/GrantedWorkers/)",
+		},
+		{
 			name: "wireCaseAccessWorker",
 			typ:  wireCaseAccessWorker{},
 			keys: []string{"workerNr"},
