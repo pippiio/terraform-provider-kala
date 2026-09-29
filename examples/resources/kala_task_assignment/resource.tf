@@ -27,6 +27,13 @@ resource "kala_task_assignment" "samwise" {
   task_ids = [kala_task.checklist["test"].id]
 }
 
+# On a RESTRICTED case the employee must also have access, or the apply fails
+# before anything is assigned. Grant it with kala_case_access and depend on it:
+#
+#   depends_on = [kala_case_access.gimli_roof]
+#
+# See the kala_case_access example.
+
 # `terraform destroy` detaches the employee from every task the link covers.
 # Kala exposes no way to remove the link itself, so it remains with nothing
 # assigned to it — harmless, and reused if the resource is added back.

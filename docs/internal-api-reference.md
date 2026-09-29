@@ -90,7 +90,7 @@ the UI's access panel:
 | Endpoint | Method | Keys on | Notes |
 |---|---|---|---|
 | `/api/GrantedWorkers/` | GET | `caseNr` (query) | `{"grantedWorkers":[<workerNr>…],"rolesEnabled":<bool>}` — plain numbers, no personal data. Unknown case → HTTP 500 |
-| `/api/GrantAccess/` | POST | `caseNr` (body) | `{"workerNumber":N,"caseNr":"…","access":<bool>,"role":[]}` — grant or revoke. A **write**; not used by the provider and not on ARCH1.3's list |
+| `/api/GrantAccess/` | POST | `caseNr` (body) | `{"workerNumber":N,"caseNr":"…","access":<bool>,"role":[]}` — grant or revoke. A **write**, used by `kala_case_access` (ARCH1.3 #27). Keys on `workerNumber`, not `workerNr`. Response not characterised: every write is verified by reading `GrantedWorkers` back |
 
 The access list governs only a **restricted** case (`restricted` in the case detail); unrestricted
 cases observed have an empty list and everyone has access. On a restricted case an employee can be

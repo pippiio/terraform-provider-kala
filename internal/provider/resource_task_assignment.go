@@ -75,7 +75,13 @@ func (r *taskAssignmentResource) Schema(_ context.Context, _ resource.SchemaRequ
 			"same pair would overwrite each other on every apply.\n\n" +
 			"`terraform destroy` detaches the employee from each task it covers. Kala exposes " +
 			"no way to remove the underlying link itself, so the link may remain with nothing " +
-			"assigned to it.",
+			"assigned to it.\n\n" +
+			"**Assignment is not access.** On a restricted case the employee must also be on the " +
+			"case's access list, or they could not see the tasks. Create and update therefore fail " +
+			"— before anything is written — when the case is restricted and the employee has no " +
+			"access; refresh warns if access is revoked later. Grant access in Kala or with " +
+			"`kala_case_access`, and when that resource is in the same configuration, reference it " +
+			"with `depends_on` so the access exists before the assignment is made.",
 		Attributes: map[string]schema.Attribute{
 			"case_number": schema.StringAttribute{
 				Required:      true,

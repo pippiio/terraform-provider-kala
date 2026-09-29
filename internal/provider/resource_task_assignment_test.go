@@ -635,3 +635,14 @@ func TestUpdateAssignment_UncheckableAccessChangesNothing(t *testing.T) {
 		t.Errorf("nothing may be written: links %v, checklists %v", fi.ensureLinkCalls, fi.setChecklistCalls)
 	}
 }
+
+// The guard is behaviour a user meets as an apply failure; the description is
+// where they should meet it first.
+func TestTaskAssignment_SchemaDescribesTheAccessGuard(t *testing.T) {
+	d := strings.ToLower(assignSchema(t).MarkdownDescription)
+	for _, want := range []string{"restricted", "kala_case_access", "depends_on"} {
+		if !strings.Contains(d, want) {
+			t.Errorf("the description must mention %q; got: %s", want, d)
+		}
+	}
+}
