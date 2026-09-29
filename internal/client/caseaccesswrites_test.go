@@ -86,3 +86,20 @@ func TestSetCaseAccess_RefusedWriteSurfacesKalasMessage(t *testing.T) {
 		t.Error("a refused write must not be followed by a read-back that could mask it")
 	}
 }
+
+// The write went out, but the access list could not be read back: the change
+// may or may not have landed, and the error must say it was sent but not
+// verified rather than claim either outcome.
+func TestSetCaseAccess_UnverifiableWriteSaysSo(t *testing.T) {
+	m := newCaseAccessMock(t)
+	m.granted = []int64{1}
+	m.grantedStatus = 500
+
+	err := m.client().SetCaseAccess(context.Background(), "KA-2", 23, true)
+	if err == nil || !strings.Contains(err.Error(), "could not be verified") {
+		t.Fatalf("want 'sent but could not be verified'; got %v", err)
+	}
+	if len(m.grantBodies) != 1 {
+		t.Errorf("the write itself must have been sent; got %d", len(m.grantBodies))
+	}
+}

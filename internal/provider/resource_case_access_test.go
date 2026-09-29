@@ -333,3 +333,118 @@ func TestProvider_RegistersCaseAccessResource(t *testing.T) {
 	}
 	t.Error("kala_case_access is not registered in the provider's Resources")
 }
+
+// --- Remaining paths ------------------------------------------------------------
+
+func TestCaseAccessResource_Configure(t *testing.T) {
+	r := &caseAccessResource{}
+	var resp resource.ConfigureResponse
+	r.Configure(context.Background(), resource.ConfigureRequest{}, &resp)
+	if r.clients != nil || resp.Diagnostics.HasError() {
+		t.Error("nil provider data must leave the resource unconfigured, without error")
+	}
+	r.Configure(context.Background(), resource.ConfigureRequest{ProviderData: "wrong"}, &resp)
+	if !resp.Diagnostics.HasError() {
+		t.Error("unexpected provider data must produce a diagnostic")
+	}
+	want := &providerClients{Internal: newFakeInternal()}
+	r.Configure(context.Background(), resource.ConfigureRequest{ProviderData: want}, &resource.ConfigureResponse{})
+	if r.clients != want {
+		t.Error("configured clients must be kept")
+	}
+}
+
+// Nothing in a grant can change in place, so Update only carries the plan.
+func TestCaseAccessResource_UpdateCarriesThePlan(t *testing.T) {
+	sch := accessResSchema(t)
+	m := existingAccess()
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: sch, Raw: accessResValue(t, m)}}
+	newCaseAccessResource(fakeKA2(23)).Update(context.Background(),
+		resource.UpdateRequest{Plan: tfsdk.Plan{Schema: sch, Raw: accessResValue(t, m)}}, resp)
+	if resp.Diagnostics.HasError() || stateOf(t, resp.State).ID.ValueString() != "KA-2/23" {
+		t.Errorf("Update must carry the plan into state; diags %v", resp.Diagnostics)
+	}
+}
+
+// Without username/password there is no internal client, and every operation
+// must say which credentials are missing rather than fail obscurely.
+func TestCaseAccessResource_WithoutInternalClientNamesTheCredentials(t *testing.T) {
+	r := &caseAccessResource{clients: &providerClients{Web: &fakeClient{}}}
+	sch := accessResSchema(t)
+	st := tfsdk.State{Schema: sch, Raw: accessResValue(t, existingAccess())}
+	plan := tfsdk.Plan{Schema: sch, Raw: accessResValue(t, plannedAccess())}
+
+	c := &resource.CreateResponse{State: tfsdk.State{Schema: sch, Raw: tftypes.NewValue(sch.Type().TerraformType(context.Background()), nil)}}
+	r.Create(context.Background(), resource.CreateRequest{Plan: plan}, c)
+	rd := &resource.ReadResponse{State: st}
+	r.Read(context.Background(), resource.ReadRequest{State: st}, rd)
+	dl := &resource.DeleteResponse{State: st}
+	r.Delete(context.Background(), resource.DeleteRequest{State: st}, dl)
+
+	for name, diags := range map[string]interface {
+		HasError() bool
+	}{"Create": c.Diagnostics, "Read": rd.Diagnostics, "Delete": dl.Diagnostics} {
+		if !diags.HasError() {
+			t.Errorf("%s without an internal client must error", name)
+		}
+	}
+	if d := c.Diagnostics.Errors(); len(d) == 0 || !strings.Contains(d[0].Detail(), "KALA_USERNAME") {
+		t.Errorf("the diagnostic must name KALA_USERNAME; got %v", c.Diagnostics)
+	}
+}
+
+// A failure that is not absence must not be reported as a missing case, and
+// must not write.
+func TestCaseAccessResource_CreateOnAReadFailureIsNotNotFound(t *testing.T) {
+	fi := fakeKA2(1)
+	fi.getCaseAccessErr = errors.New("kala: server error")
+	resp := createAccess(t, fi, plannedAccess())
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("want an error")
+	}
+	if strings.Contains(resp.Diagnostics.Errors()[0].Summary(), "not found") {
+		t.Errorf("a server error is not a missing case; got %q", resp.Diagnostics.Errors()[0].Summary())
+	}
+	if len(fi.setCaseAccessCalls) != 0 {
+		t.Errorf("nothing may be written; got %v", fi.setCaseAccessCalls)
+	}
+}
+
+// If the access list cannot be read before a destroy, the revoke is not
+// attempted and the destroy fails -- it must not succeed and leave access behind.
+func TestCaseAccessResource_DeleteOnAReadFailureFailsTheDestroy(t *testing.T) {
+	fi := fakeKA2(1, 23)
+	fi.getCaseAccessErr = errors.New("kala: server error")
+	resp := deleteAccess(t, fi, existingAccess())
+	if !resp.Diagnostics.HasError() || len(fi.setCaseAccessCalls) != 0 {
+		t.Errorf("want a failed destroy and no write; diags %v, calls %v", resp.Diagnostics, fi.setCaseAccessCalls)
+	}
+}
+
+// A plan or state that does not match the model is a provider bug. Each
+// operation must report it and stop -- never proceed with zero values, which
+// would grant or revoke for case "" and employee 0.
+func TestCaseAccessResource_MismatchedSchemaIsReportedAndNothingIsWritten(t *testing.T) {
+	fi := fakeKA2(1, 23)
+	r := newCaseAccessResource(fi)
+	wrongSch := assignSchema(t) // kala_task_assignment's: not this model
+	sch := accessResSchema(t)
+
+	c := &resource.CreateResponse{State: tfsdk.State{Schema: sch}}
+	r.Create(context.Background(), resource.CreateRequest{Plan: tfsdk.Plan{Schema: wrongSch, Raw: assignValue(t, plannedAssignment(1))}}, c)
+	rd := &resource.ReadResponse{State: tfsdk.State{Schema: sch}}
+	r.Read(context.Background(), resource.ReadRequest{State: tfsdk.State{Schema: wrongSch, Raw: assignValue(t, existingAssignment(1))}}, rd)
+	dl := &resource.DeleteResponse{}
+	r.Delete(context.Background(), resource.DeleteRequest{State: tfsdk.State{Schema: wrongSch, Raw: assignValue(t, existingAssignment(1))}}, dl)
+
+	for name, has := range map[string]bool{
+		"Create": c.Diagnostics.HasError(), "Read": rd.Diagnostics.HasError(), "Delete": dl.Diagnostics.HasError(),
+	} {
+		if !has {
+			t.Errorf("%s with a mismatched schema must error", name)
+		}
+	}
+	if len(fi.setCaseAccessCalls) != 0 {
+		t.Errorf("nothing may be written; got %v", fi.setCaseAccessCalls)
+	}
+}
