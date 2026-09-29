@@ -25,6 +25,14 @@ type caseAccessMock struct {
 
 	lastQuery  string
 	detailHits int
+
+	// GET /api/GrantedWorkers/ -- Kala's access list, observed 2026-09-29 as
+	// {"grantedWorkers":[<workerNr>...],"rolesEnabled":<bool>}.
+	granted       []int64
+	grantedStatus int    // when non-zero, returned instead of a body
+	grantedRaw    string // when non-empty, written verbatim instead
+	grantedQuery  string
+	grantedHits   int
 }
 
 func newCaseAccessMock(t *testing.T) *caseAccessMock {
@@ -51,6 +59,23 @@ func newCaseAccessMock(t *testing.T) *caseAccessMock {
 				return
 			}
 			_ = json.NewEncoder(w).Encode(m.detail)
+
+		case strings.HasSuffix(r.URL.Path, "/api/GrantedWorkers/"):
+			m.grantedHits++
+			m.grantedQuery = r.URL.RawQuery
+			if m.grantedStatus != 0 {
+				w.WriteHeader(m.grantedStatus)
+				return
+			}
+			if m.grantedRaw != "" {
+				_, _ = w.Write([]byte(m.grantedRaw))
+				return
+			}
+			g := m.granted
+			if g == nil {
+				g = []int64{}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"grantedWorkers": g, "rolesEnabled": false})
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -368,5 +393,99 @@ func TestGetCaseAccess_MalformedBodyIsADecodeError(t *testing.T) {
 	}
 	if errors.Is(err, ErrNotFound) {
 		t.Errorf("a malformed body is not an absent case, got %v", err)
+	}
+}
+
+// --- Granted: Kala's own access list ----------------------------------------
+//
+// The operator established on 2026-09-29 that Kala keeps TWO lists per case:
+// employees GRANTED access (GET /api/GrantedWorkers/) and employees ASSIGNED to
+// its tasks. They are different things. On a restricted case every assigned
+// employee should also be granted, or they cannot see the tasks they are
+// assigned to -- and case KA-2 was found live with exactly that broken: employee
+// 23 assigned, access revoked.
+
+// The shape of case KA-2 as observed: restricted, 23 assigned but not granted.
+func TestGetCaseAccess_ReadsGrantedAndAssignedSeparately(t *testing.T) {
+	m := newCaseAccessMock(t)
+	m.detail = accessDetail(2, true, 1, accessItem(7, 1, 23))
+	m.granted = []int64{1}
+
+	got, err := m.client().GetCaseAccess(context.Background(), "KA-2")
+	if err != nil {
+		t.Fatalf("GetCaseAccess: %v", err)
+	}
+	if len(got.Granted) != 1 || got.Granted[0] != 1 {
+		t.Errorf("Granted = %v, want [1] — Kala's list, not the assignments", got.Granted)
+	}
+	if len(got.Assigned) != 2 || got.Assigned[0] != 1 || got.Assigned[1] != 23 {
+		t.Errorf("Assigned = %v, want [1 23]", got.Assigned)
+	}
+	if m.grantedHits != 1 {
+		t.Errorf("GrantedWorkers called %d times, want 1", m.grantedHits)
+	}
+	if !strings.Contains(m.grantedQuery, "caseNr=KA-2") {
+		t.Errorf("GrantedWorkers query was %q, want caseNr=KA-2", m.grantedQuery)
+	}
+}
+
+func TestGetCaseAccess_GrantedIsDeduplicatedAndSorted(t *testing.T) {
+	m := newCaseAccessMock(t)
+	m.detail = accessDetail(2, true, 1, accessItem(7, 1))
+	m.granted = []int64{9, 3, 9}
+
+	got, err := m.client().GetCaseAccess(context.Background(), "KA-2")
+	if err != nil {
+		t.Fatalf("GetCaseAccess: %v", err)
+	}
+	if len(got.Granted) != 2 || got.Granted[0] != 3 || got.Granted[1] != 9 {
+		t.Errorf("Granted = %v, want [3 9]", got.Granted)
+	}
+}
+
+// An unreadable access list must never become an empty one. On a restricted
+// case an empty list states that NOBODY has access -- a confident, wrong answer.
+// The case is known to exist (its detail read succeeded), so none of these is
+// "not found" either.
+func TestGetCaseAccess_UnreadableGrantsAreAnErrorNotAnEmptyList(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		raw    string
+	}{
+		{"persistent 500", http.StatusInternalServerError, ""},
+		{"empty body", 0, " "},
+		{"key missing", 0, `{"rolesEnabled":false}`},
+		{"not JSON", 0, `<html>nope</html>`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newCaseAccessMock(t)
+			m.detail = accessDetail(2, true, 1, accessItem(7, 1))
+			m.grantedStatus = tc.status
+			m.grantedRaw = tc.raw
+
+			got, err := m.client().GetCaseAccess(context.Background(), "KA-2")
+			if err == nil {
+				t.Fatalf("want an error; got Granted=%v, which would read as a real answer", got.Granted)
+			}
+			if errors.Is(err, ErrNotFound) {
+				t.Errorf("the case exists — its detail read succeeded — so this is not not-found: %v", err)
+			}
+		})
+	}
+}
+
+// The two reads are ordered: the detail read establishes that the case exists,
+// so a failure there must stop before the access list is requested. No half
+// result, and no second request against a case already known to be missing.
+func TestGetCaseAccess_DetailFailureStopsBeforeGrants(t *testing.T) {
+	m := newCaseAccessMock(t)
+	m.detailStatus = http.StatusInternalServerError
+
+	if _, err := m.client().GetCaseAccess(context.Background(), "KA-9"); err == nil {
+		t.Fatal("a failed detail read must error")
+	}
+	if m.grantedHits != 0 {
+		t.Errorf("GrantedWorkers was called %d times after the detail read failed", m.grantedHits)
 	}
 }

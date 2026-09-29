@@ -67,6 +67,10 @@ type CaseAccess struct {
 	// the provider layer turns it into an unordered set, but a client returning
 	// arbitrary order would make its own tests flaky.
 	Assigned []int64
+
+	// Granted is Kala's own access list for the case, from
+	// GET /api/GrantedWorkers/. Deduplicated and sorted ascending.
+	Granted []int64
 }
 
 // wireCaseAccess is the NARROW decode of /api/GetJobDetailsAdvanced/.
