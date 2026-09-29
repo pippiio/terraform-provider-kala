@@ -13,7 +13,8 @@
 //      unlike the records Kala cannot delete -- there is nothing to warn about.
 //   4. Every attribute that identifies the grant forces replacement; a grant has
 //      nothing the provider can change in place.
-// Output: state keyed "<case_number>/<employee_number>".
+// Output: state keyed "<case_number>:<employee_number>", the same form as
+//         kala_task_assignment's import ID.
 //
 // Dependencies: client.InternalClient (GetCaseAccess, SetCaseAccess).
 // Side effects: CHANGES WHO MAY ACCESS A REAL CASE.
@@ -73,7 +74,7 @@ func (r *caseAccessResource) Schema(_ context.Context, _ resource.SchemaRequest,
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:            true,
-				MarkdownDescription: "`<case_number>/<employee_number>`, also the import ID.",
+				MarkdownDescription: "`<case_number>:<employee_number>`, also the import ID — the same form as `kala_task_assignment`.",
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"case_number": schema.StringAttribute{
@@ -109,7 +110,7 @@ func (r *caseAccessResource) Configure(_ context.Context, req resource.Configure
 }
 
 func accessID(caseNumber string, employee int64) string {
-	return caseNumber + "/" + strconv.FormatInt(employee, 10)
+	return caseNumber + ":" + strconv.FormatInt(employee, 10)
 }
 
 func (r *caseAccessResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -235,7 +236,7 @@ func (r *caseAccessResource) Delete(ctx context.Context, req resource.DeleteRequ
 }
 
 func (r *caseAccessResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	i := strings.LastIndex(req.ID, "/")
+	i := strings.LastIndex(req.ID, ":")
 	number, rest := "", ""
 	if i > 0 {
 		number, rest = req.ID[:i], req.ID[i+1:]
@@ -243,7 +244,7 @@ func (r *caseAccessResource) ImportState(ctx context.Context, req resource.Impor
 	employee, err := strconv.ParseInt(rest, 10, 64)
 	if number == "" || err != nil || employee <= 0 {
 		resp.Diagnostics.AddError("Invalid import ID for kala_case_access",
-			fmt.Sprintf("Import expects <case_number>/<employee_number>, for example KA-2/23; got %q.", req.ID))
+			fmt.Sprintf("Import expects <case_number>:<employee_number>, for example KA-2:23 — the same form as kala_task_assignment; got %q.", req.ID))
 		return
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), accessID(number, employee))...)

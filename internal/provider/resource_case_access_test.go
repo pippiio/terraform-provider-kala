@@ -63,7 +63,7 @@ func plannedAccess() caseAccessResourceModel {
 
 func existingAccess() caseAccessResourceModel {
 	return caseAccessResourceModel{
-		ID: types.StringValue("KA-2/23"), CaseNumber: types.StringValue("KA-2"),
+		ID: types.StringValue("KA-2:23"), CaseNumber: types.StringValue("KA-2"),
 		EmployeeNumber: types.Int64Value(23), CaseID: types.Int64Value(2),
 	}
 }
@@ -155,8 +155,8 @@ func TestCaseAccessResource_CreateGrants(t *testing.T) {
 		t.Fatalf("want one grant of 23 on KA-2; got %v", fi.setCaseAccessCalls)
 	}
 	m := stateOf(t, resp.State)
-	if m.ID.ValueString() != "KA-2/23" || m.CaseID.ValueInt64() != 2 {
-		t.Errorf("state id/case_id = %q/%d, want KA-2/23 / 2", m.ID.ValueString(), m.CaseID.ValueInt64())
+	if m.ID.ValueString() != "KA-2:23" || m.CaseID.ValueInt64() != 2 {
+		t.Errorf("state id/case_id = %q/%d, want KA-2:23 / 2", m.ID.ValueString(), m.CaseID.ValueInt64())
 	}
 }
 
@@ -171,7 +171,7 @@ func TestCaseAccessResource_CreateAdoptsAnExistingGrantWithoutWriting(t *testing
 	if len(fi.setCaseAccessCalls) != 0 {
 		t.Errorf("an existing grant must be adopted without writing; got %v", fi.setCaseAccessCalls)
 	}
-	if stateOf(t, resp.State).ID.ValueString() != "KA-2/23" {
+	if stateOf(t, resp.State).ID.ValueString() != "KA-2:23" {
 		t.Error("the adopted grant must be recorded in state")
 	}
 }
@@ -299,7 +299,7 @@ func TestCaseAccessResource_DeleteSurfacesAFailedRevoke(t *testing.T) {
 func TestCaseAccessResource_ImportByCaseAndEmployee(t *testing.T) {
 	sch := accessResSchema(t)
 	resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: sch, Raw: tftypes.NewValue(sch.Type().TerraformType(context.Background()), nil)}}
-	newCaseAccessResource(fakeKA2(23)).ImportState(context.Background(), resource.ImportStateRequest{ID: "KA-2/23"}, resp)
+	newCaseAccessResource(fakeKA2(23)).ImportState(context.Background(), resource.ImportStateRequest{ID: "KA-2:23"}, resp)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("ImportState: %v", resp.Diagnostics)
 	}
@@ -308,12 +308,12 @@ func TestCaseAccessResource_ImportByCaseAndEmployee(t *testing.T) {
 	resp.State.GetAttribute(context.Background(), path.Root("employee_number"), &nr)
 	resp.State.GetAttribute(context.Background(), path.Root("case_number"), &cn)
 	if nr.ValueInt64() != 23 || cn.ValueString() != "KA-2" {
-		t.Errorf("imported case_number/employee_number = %q/%d, want KA-2/23", cn.ValueString(), nr.ValueInt64())
+		t.Errorf("imported case_number/employee_number = %q/%d, want KA-2:23", cn.ValueString(), nr.ValueInt64())
 	}
 }
 
 func TestCaseAccessResource_ImportRejectsMalformedIDs(t *testing.T) {
-	for _, id := range []string{"KA-2", "KA-2/", "/23", "KA-2/x", "KA-2/0"} {
+	for _, id := range []string{"KA-2", "KA-2:", ":23", "KA-2:x", "KA-2:0", "KA-2/23"} {
 		sch := accessResSchema(t)
 		resp := &resource.ImportStateResponse{State: tfsdk.State{Schema: sch, Raw: tftypes.NewValue(sch.Type().TerraformType(context.Background()), nil)}}
 		newCaseAccessResource(fakeKA2()).ImportState(context.Background(), resource.ImportStateRequest{ID: id}, resp)
@@ -361,7 +361,7 @@ func TestCaseAccessResource_UpdateCarriesThePlan(t *testing.T) {
 	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: sch, Raw: accessResValue(t, m)}}
 	newCaseAccessResource(fakeKA2(23)).Update(context.Background(),
 		resource.UpdateRequest{Plan: tfsdk.Plan{Schema: sch, Raw: accessResValue(t, m)}}, resp)
-	if resp.Diagnostics.HasError() || stateOf(t, resp.State).ID.ValueString() != "KA-2/23" {
+	if resp.Diagnostics.HasError() || stateOf(t, resp.State).ID.ValueString() != "KA-2:23" {
 		t.Errorf("Update must carry the plan into state; diags %v", resp.Diagnostics)
 	}
 }
