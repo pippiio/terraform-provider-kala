@@ -21,7 +21,9 @@
 //      also establishes that the case exists; if it fails, stop.
 //   2. Decode it with a NARROW wire type: those four things only. The wide
 //      wireCaseDetail carries commercial figures, and the worker element carries
-//      names and phone numbers; neither is needed, so neither is decoded.
+//      names and phone numbers; neither is needed, so neither is decoded. It
+//      also made this read immune to the decimal decode bug that broke GetCase
+//      and ListTasks until 2026-09-27.
 //   3. Verify len(checklistItems) against checklistItemsTotal. A mismatch is an
 //      error naming both numbers, never a short set.
 //   4. GET /api/GrantedWorkers/?caseNr= -- {"grantedWorkers":[<workerNr>...]}.
@@ -73,15 +75,15 @@ type CaseAccess struct {
 // wireCaseAccess is the NARROW decode of /api/GetJobDetailsAdvanced/.
 //
 // It declares four things out of the endpoint's 64 fields, and the omissions are
-// load-bearing rather than tidiness. wireCaseDetail declares Kala's numerics as
-// Go int -- registeredHoursTotal, billedHours, cost, sales and the rest -- while
-// Kala returns decimals: 0.25 was observed on registeredHoursTotal. Decoding
-// into an int field is a hard failure, so wireCaseDetail cannot read such a
-// case at all.
+// deliberate. This read needs identifiers and a count, so it decodes nothing
+// else: no commercial figure, and -- via wireCaseAccessWorker -- no personal
+// field.
 //
-// encoding/json ignores keys absent from the target struct, so declaring none of
-// those fields makes this type immune. Verified against the failing case before
-// this file existed. DO NOT add a numeric field here without making it float64.
+// Kala returns DECIMALS for hours and money. Until 2026-09-27 wireCaseDetail
+// declared them int and failed outright on such a case; this type, declaring
+// none of them, was immune. That is fixed, but the rule stands: DO NOT add a
+// numeric field here that is not an identifier or a count, and if you must,
+// make it float64.
 type wireCaseAccess struct {
 	CaseID              int64                `json:"caseId"`
 	Restricted          bool                 `json:"restricted"`

@@ -176,10 +176,9 @@ type InternalClient interface {
 	// access list, /api/GrantedWorkers/) and the employees ASSIGNED to its tasks.
 	// They are different lists: assignment is not access. See caseaccess.go.
 	//
-	// It reads the same case detail as GetCase but decodes it NARROWLY, and that
-	// is deliberate rather than duplication: CaseDetail declares Kala's numerics
-	// as int while Kala returns decimals, so GetCase fails outright on a case
-	// with fractional hours.
+	// It reads the same case detail as GetCase but decodes it NARROWLY -- four
+	// fields, identifiers only -- so no personal data and no commercial figure
+	// is ever decoded on this path.
 	GetCaseAccess(ctx context.Context, caseNumber string) (CaseAccess, error)
 
 	// SetCaseField sets one field on a case and verifies it by read-back.

@@ -81,7 +81,7 @@ resource "kala_task" "checklist" {
 - `image_required` (Boolean) Whether completing the task requires a photo.
 - `invoice_mode` (String) How the task is invoiced, e.g. `REG_HOURS&STANDARD`. Treated as an opaque tenant value rather than a validated enum.
 - `note_required` (Boolean) Whether completing the task requires a note.
-- `price_fixed` (Number) Fixed price, when one applies. Null means no fixed price.
+- `price_fixed` (Number) Fixed price, when one applies. Null means no fixed price. Fractional values are accepted — Kala prices carry cents.
 
 ### Read-Only
 

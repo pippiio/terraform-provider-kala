@@ -29,8 +29,8 @@ func (f *taskFake) ListTasks(_ context.Context, q client.TaskQuery) (client.Task
 	return f.scan, f.err
 }
 
-func i64ptr(v int64) *int64 { return &v }
-func iptr(v int) *int       { return &v }
+func i64ptr(v int64) *int64     { return &v }
+func f64ptr(v float64) *float64 { return &v }
 
 func sampleTasks() []client.Task {
 	added := time.Date(2026, 9, 2, 7, 19, 3, 0, time.UTC)
@@ -41,7 +41,7 @@ func sampleTasks() []client.Task {
 			StatusName: "Færdig", AssigneeWorkerNr: i64ptr(1), AssignedToMe: false,
 			CreatedBy: "Frodo Baggins", FinishedBy: "Frodo Baggins",
 			TimeAdded: &added, TimeFinished: &fin, IsFinished: true,
-			InvoiceMode: "REG_HOURS&SPECIAL", PriceFixed: iptr(550),
+			InvoiceMode: "REG_HOURS&SPECIAL", PriceFixed: f64ptr(550),
 			RegisteredHoursTotal: 4, BilledHours: 3,
 			NoteRequired: false, ImageRequired: true, HasImage: false,
 		},
@@ -190,11 +190,11 @@ func TestBuildTasksState_ExposesGatedFieldsWhenRequested(t *testing.T) {
 	if k.CreatedBy.ValueString() != "Frodo Baggins" || k.FinishedBy.ValueString() != "Frodo Baggins" {
 		t.Errorf("authorship = %q/%q", k.CreatedBy.ValueString(), k.FinishedBy.ValueString())
 	}
-	if k.RegisteredHoursTotal.ValueInt64() != 4 || k.BilledHours.ValueInt64() != 3 {
-		t.Errorf("hours = %d/%d, want 4/3", k.RegisteredHoursTotal.ValueInt64(), k.BilledHours.ValueInt64())
+	if k.RegisteredHoursTotal.ValueFloat64() != 4 || k.BilledHours.ValueFloat64() != 3 {
+		t.Errorf("hours = %v/%v, want 4/3", k.RegisteredHoursTotal.ValueFloat64(), k.BilledHours.ValueFloat64())
 	}
-	if k.PriceFixed.ValueInt64() != 550 {
-		t.Errorf("price_fixed = %d, want 550", k.PriceFixed.ValueInt64())
+	if k.PriceFixed.ValueFloat64() != 550 {
+		t.Errorf("price_fixed = %v, want 550", k.PriceFixed.ValueFloat64())
 	}
 }
 
@@ -493,7 +493,7 @@ func TestTaskRead_ExposesGatedFieldsWhenRequested(t *testing.T) {
 	if state.AssigneeWorkerNr.ValueInt64() != 1 {
 		t.Errorf("assignee_worker_nr = %d, want 1", state.AssigneeWorkerNr.ValueInt64())
 	}
-	if state.PriceFixed.ValueInt64() != 550 {
-		t.Errorf("price_fixed = %d, want 550", state.PriceFixed.ValueInt64())
+	if state.PriceFixed.ValueFloat64() != 550 {
+		t.Errorf("price_fixed = %v, want 550", state.PriceFixed.ValueFloat64())
 	}
 }

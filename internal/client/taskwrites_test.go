@@ -134,7 +134,7 @@ func (m *taskWriteMock) client() InternalClient {
 
 func taskInput() TaskInput {
 	d := time.Date(2026, 9, 30, 15, 11, 32, 0, time.UTC)
-	price := 500
+	price := 500.0
 	return TaskInput{
 		CaseNumber: "KA-1", CaseID: 1, Name: "Mount gutter", NoteRequired: true,
 		Deadline: &d, InvoiceMode: "REG_HOURS&STANDARD", PriceFixed: &price,
