@@ -348,6 +348,11 @@ func (f *fakeInternal) accessFor(caseNumber string) (client.CaseAccess, bool) {
 	return client.CaseAccess{}, false
 }
 
+// GetCaseAccess is served from its own map rather than derived from f.cases.
+// The real client reads the same endpoint as GetCase but decodes it separately
+// and narrowly, so the two can fail independently -- as they did until
+// 2026-09-27, when GetCase could not decode a case with fractional hours and
+// GetCaseAccess could. A fake computing one from the other would hide that.
 func (f *fakeInternal) GetCaseAccess(_ context.Context, caseNumber string) (client.CaseAccess, error) {
 	if f.getCaseAccessErr != nil {
 		return client.CaseAccess{}, f.getCaseAccessErr
