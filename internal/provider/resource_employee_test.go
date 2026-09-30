@@ -52,19 +52,21 @@ type fakeInternal struct {
 	listTasksErr     error
 	truncateTasks    bool
 
-	cases            map[string]client.CaseDetail
-	caseAccess       map[string]client.CaseAccess
-	caseIn           client.NewCase
-	fieldWrites      map[client.CaseField]string
-	archivedCalls    []bool
-	customerChanges  [][2]any
-	createCaseCalled bool
-	createCaseErr    error
-	archiveErr       error
-	setCustomerErr   error
-	caseFieldErr     error
-	getCaseErr       error
-	getCaseAccessErr error
+	cases              map[string]client.CaseDetail
+	caseAccess         map[string]client.CaseAccess
+	caseIn             client.NewCase
+	fieldWrites        map[client.CaseField]string
+	archivedCalls      []bool
+	customerChanges    [][2]any
+	createCaseCalled   bool
+	createCaseErr      error
+	archiveErr         error
+	setCustomerErr     error
+	caseFieldErr       error
+	getCaseErr         error
+	getCaseAccessErr   error
+	setCaseAccessErr   error
+	setCaseAccessCalls []setCaseAccessCall
 
 	customers          map[int64]client.Customer
 	customerID         int64
@@ -332,6 +334,20 @@ func (f *fakeInternal) GetCase(_ context.Context, caseNumber string) (client.Cas
 	return d, nil
 }
 
+// accessFor answers from f.caseAccess when a test configured access explicitly,
+// and otherwise derives it from f.cases: a case that exists but was given no
+// access setup is UNRESTRICTED with nobody on its access list -- Kala's default.
+// That keeps every test written before access existed meaning what it meant.
+func (f *fakeInternal) accessFor(caseNumber string) (client.CaseAccess, bool) {
+	if a, ok := f.caseAccess[caseNumber]; ok {
+		return a, true
+	}
+	if d, ok := f.cases[caseNumber]; ok {
+		return client.CaseAccess{CaseID: d.ID, Restricted: d.Restricted}, true
+	}
+	return client.CaseAccess{}, false
+}
+
 // GetCaseAccess is served from its own map rather than derived from f.cases.
 // The real client reads the same endpoint as GetCase but decodes it separately
 // and narrowly, so the two can fail independently -- as they did until
@@ -341,11 +357,40 @@ func (f *fakeInternal) GetCaseAccess(_ context.Context, caseNumber string) (clie
 	if f.getCaseAccessErr != nil {
 		return client.CaseAccess{}, f.getCaseAccessErr
 	}
-	a, ok := f.caseAccess[caseNumber]
+	a, ok := f.accessFor(caseNumber)
 	if !ok {
 		return client.CaseAccess{}, fmt.Errorf("case %s: %w", caseNumber, client.ErrNotFound)
 	}
 	return a, nil
+}
+
+func (f *fakeInternal) SetCaseAccess(_ context.Context, caseNumber string, workerNr int64, granted bool) error {
+	f.setCaseAccessCalls = append(f.setCaseAccessCalls, setCaseAccessCall{caseNumber, workerNr, granted})
+	if f.setCaseAccessErr != nil {
+		return f.setCaseAccessErr
+	}
+	if f.caseAccess == nil {
+		f.caseAccess = map[string]client.CaseAccess{}
+	}
+	a, _ := f.accessFor(caseNumber)
+	kept := a.Granted[:0:0]
+	for _, nr := range a.Granted {
+		if nr != workerNr {
+			kept = append(kept, nr)
+		}
+	}
+	if granted {
+		kept = append(kept, workerNr)
+	}
+	a.Granted = kept
+	f.caseAccess[caseNumber] = a
+	return nil
+}
+
+type setCaseAccessCall struct {
+	caseNumber string
+	workerNr   int64
+	granted    bool
 }
 
 func (f *fakeInternal) EnsureJobLink(_ context.Context, caseID, workerNr int64) (client.JobLink, error) {

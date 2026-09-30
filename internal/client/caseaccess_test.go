@@ -33,6 +33,13 @@ type caseAccessMock struct {
 	grantedRaw    string // when non-empty, written verbatim instead
 	grantedQuery  string
 	grantedHits   int
+
+	// POST /api/GrantAccess/. The response shape was not captured; the client
+	// must not trust it, so the mock answers with a plain success envelope and
+	// the tests rely on read-back.
+	grantBodies    []map[string]any
+	grantNoReflect bool   // when true, the write "succeeds" but the list is unchanged
+	grantResponse  string // when non-empty, written instead of {"status":"Success"}
 }
 
 func newCaseAccessMock(t *testing.T) *caseAccessMock {
@@ -59,6 +66,29 @@ func newCaseAccessMock(t *testing.T) *caseAccessMock {
 				return
 			}
 			_ = json.NewEncoder(w).Encode(m.detail)
+
+		case strings.HasSuffix(r.URL.Path, "/api/GrantAccess/"):
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			m.grantBodies = append(m.grantBodies, body)
+			if !m.grantNoReflect && m.grantResponse == "" {
+				nr, _ := body["workerNumber"].(float64)
+				kept := []int64{}
+				for _, g := range m.granted {
+					if g != int64(nr) {
+						kept = append(kept, g)
+					}
+				}
+				if access, _ := body["access"].(bool); access {
+					kept = append(kept, int64(nr))
+				}
+				m.granted = kept
+			}
+			if m.grantResponse != "" {
+				_, _ = w.Write([]byte(m.grantResponse))
+				return
+			}
+			_, _ = w.Write([]byte(`{"status":"Success"}`))
 
 		case strings.HasSuffix(r.URL.Path, "/api/GrantedWorkers/"):
 			m.grantedHits++

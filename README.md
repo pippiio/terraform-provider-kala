@@ -158,7 +158,8 @@ source.
 | `kala_customer` | resource | Create and update a customer |
 | `kala_case` | resource | Create, update, and archive a case |
 | `kala_task` | resource | Create and update a checklist item |
-| `kala_task_assignment` | resource | Assign an employee to a set of tasks on a case |
+| `kala_task_assignment` | resource | Assign an employee to a set of tasks on a case — refused on a restricted case the employee cannot access |
+| `kala_case_access` | resource | Grant an employee access to a case; destroy revokes, and access revoked in Kala is restored on the next apply |
 
 ### Behaviour worth knowing before you apply
 
@@ -320,6 +321,29 @@ check "assignees_have_access" {
 
 It fires as a warning on `plan`. Found this way live on 2026-09-29: an employee whose access to a
 restricted case had been revoked was still assigned to its task.
+
+**To enforce it rather than report it**, manage access with the `kala_case_access` resource. It
+grants one employee access to one case; destroying it revokes; and access revoked in the Kala UI
+is drift, so the next plan proposes restoring it. `kala_task_assignment` refuses — before
+writing anything — to assign an employee to a restricted case they cannot access, so reference
+the grant from it:
+
+```hcl
+resource "kala_case_access" "gimli_roof" {
+  case_number     = kala_case.roof.number
+  employee_number = 101
+}
+
+resource "kala_task_assignment" "gimli" {
+  case_number   = kala_case.roof.number
+  worker_number = 101
+  task_ids      = [kala_task.mount_gutter.id]
+  depends_on    = [kala_case_access.gimli_roof]
+}
+```
+
+If access is revoked after the assignment was made, refreshing the assignment warns rather than
+fails: the assignment is intact, and it is the access that needs restoring.
 
 The data source reads two endpoints and never writes. An unreadable access list is an error,
 never an empty one — on a restricted case an empty list would say nobody has access. Per-case

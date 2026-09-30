@@ -6,6 +6,7 @@ description: |-
   Assigns one employee to a set of tasks on one case.
   Kala models assignment as a job link between a worker and a case, which then covers a set of checklist items. That link is shared: an employee assigned to two tasks on the same case has one link covering both. This resource represents the link, so declare one per (case, employee) pair — two resources for the same pair would overwrite each other on every apply.
   terraform destroy detaches the employee from each task it covers. Kala exposes no way to remove the underlying link itself, so the link may remain with nothing assigned to it.
+  Assignment is not access. On a restricted case the employee must also be on the case's access list, or they could not see the tasks. Create and update therefore fail — before anything is written — when the case is restricted and the employee has no access; refresh warns if access is revoked later. Grant access in Kala or with kala_case_access, and when that resource is in the same configuration, reference it with depends_on so the access exists before the assignment is made.
 ---
 
 # kala_task_assignment (Resource)
@@ -15,6 +16,8 @@ Assigns one employee to a set of tasks on one case.
 Kala models assignment as a **job link** between a worker and a case, which then covers a set of checklist items. That link is **shared**: an employee assigned to two tasks on the same case has one link covering both. This resource represents the link, so declare **one per (case, employee) pair** — two resources for the same pair would overwrite each other on every apply.
 
 `terraform destroy` detaches the employee from each task it covers. Kala exposes no way to remove the underlying link itself, so the link may remain with nothing assigned to it.
+
+**Assignment is not access.** On a restricted case the employee must also be on the case's access list, or they could not see the tasks. Create and update therefore fail — before anything is written — when the case is restricted and the employee has no access; refresh warns if access is revoked later. Grant access in Kala or with `kala_case_access`, and when that resource is in the same configuration, reference it with `depends_on` so the access exists before the assignment is made.
 
 ## Example Usage
 
@@ -47,6 +50,13 @@ resource "kala_task_assignment" "samwise" {
 
   task_ids = [kala_task.checklist["test"].id]
 }
+
+# On a RESTRICTED case the employee must also have access, or the apply fails
+# before anything is assigned. Grant it with kala_case_access and depend on it:
+#
+#   depends_on = [kala_case_access.gimli_roof]
+#
+# See the kala_case_access example.
 
 # `terraform destroy` detaches the employee from every task the link covers.
 # Kala exposes no way to remove the link itself, so it remains with nothing
