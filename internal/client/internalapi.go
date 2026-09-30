@@ -654,7 +654,12 @@ func describeCompanies(companies []wireCompany) string {
 }
 
 func (c *internalAPI) signIn(ctx context.Context) (wireSignInResponse, error) {
-	body, err := json.Marshal(wireSignInRequest{
+	// Marshalling the password is the point of this request: /Auth/SignIn/ takes
+	// it in the body. It never reaches a log -- nothing in this file logs a
+	// request body -- and any error that might echo it is passed through
+	// sanitizeError, which redacts the "password" key. That path is pinned by
+	// TestSignInFailure_DoesNotLeakThePassword.
+	body, err := json.Marshal(wireSignInRequest{ //nolint:gosec // G117: see the comment above
 		Username: c.cfg.Username,
 		Password: c.cfg.Password,
 		AppType:  "web",

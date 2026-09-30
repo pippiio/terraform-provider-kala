@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -280,18 +281,6 @@ func setOf(t *testing.T, v types.Set) []int64 {
 	return out
 }
 
-func equalInts(a, b []int64) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
 // Case KA-2 exactly as found live on 2026-09-29: restricted, employee 23 still
 // assigned after his access was revoked.
 func TestCaseAccessRead_KA2_AssignedWithoutAccessIsReported(t *testing.T) {
@@ -311,7 +300,7 @@ func TestCaseAccessRead_KA2_AssignedWithoutAccessIsReported(t *testing.T) {
 		{"assigned_employee_numbers", m.AssignedEmployeeNumbers, []int64{1, 23}},
 		{"assigned_without_access", m.AssignedWithoutAccess, []int64{23}},
 	} {
-		if got := setOf(t, tc.got); !equalInts(got, tc.want) {
+		if got := setOf(t, tc.got); !slices.Equal(got, tc.want) {
 			t.Errorf("%s = %v, want %v", tc.name, got, tc.want)
 		}
 	}
@@ -327,7 +316,7 @@ func TestCaseAccessRead_UnrestrictedCaseHasNobodyWithoutAccess(t *testing.T) {
 	if got := setOf(t, m.AssignedWithoutAccess); len(got) != 0 {
 		t.Errorf("assigned_without_access = %v, want empty on an unrestricted case", got)
 	}
-	if got := setOf(t, m.AssignedEmployeeNumbers); !equalInts(got, []int64{1}) {
+	if got := setOf(t, m.AssignedEmployeeNumbers); !slices.Equal(got, []int64{1}) {
 		t.Errorf("assigned_employee_numbers = %v, want [1]", got)
 	}
 }
@@ -340,7 +329,7 @@ func TestCaseAccessRead_GrantedWithoutAssignmentIsNotAFinding(t *testing.T) {
 	if got := setOf(t, m.AssignedWithoutAccess); len(got) != 0 {
 		t.Errorf("assigned_without_access = %v, want empty", got)
 	}
-	if got := setOf(t, m.GrantedEmployeeNumbers); !equalInts(got, []int64{1, 5, 23}) {
+	if got := setOf(t, m.GrantedEmployeeNumbers); !slices.Equal(got, []int64{1, 5, 23}) {
 		t.Errorf("granted_employee_numbers = %v, want [1 5 23]", got)
 	}
 }
