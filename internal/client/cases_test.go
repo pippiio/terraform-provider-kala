@@ -493,7 +493,7 @@ func TestGetCase_DecodesFinancialFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetCase: %v", err)
 	}
-	for name, got := range map[string]int{
+	for name, got := range map[string]float64{
 		"Cost": d.Cost, "Sales": d.Sales, "Result": d.Result,
 		"Invoiced": d.Invoiced, "Uninvoiced": d.Uninvoiced, "Realised": d.Realised,
 		"RegisteredHoursTotal": d.RegisteredHoursTotal, "BilledHours": d.BilledHours,
@@ -503,7 +503,7 @@ func TestGetCase_DecodesFinancialFields(t *testing.T) {
 		}
 	}
 	if d.Sales != 4000 || d.Result != 2800 {
-		t.Errorf("Sales/Result = %d/%d, want 4000/2800", d.Sales, d.Result)
+		t.Errorf("Sales/Result = %v/%v, want 4000/2800", d.Sales, d.Result)
 	}
 }
 

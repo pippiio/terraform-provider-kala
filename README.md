@@ -152,12 +152,14 @@ source.
 | `kala_customer` | data source | One customer by `id`, `number`, or `cvr` |
 | `kala_cases` | data source | List cases, active or archived |
 | `kala_case` | data source | One case by number, with the full detail record |
+| `kala_case_access` | data source | Who is granted access to a case, who is assigned to its tasks, and who is [assigned without access](#case-access-granted-and-assigned-are-different-lists) |
 | `kala_tasks` | data source | Tasks (checklist items) on one case |
 | `kala_task` | data source | One task by `id` or name |
 | `kala_customer` | resource | Create and update a customer |
 | `kala_case` | resource | Create, update, and archive a case |
 | `kala_task` | resource | Create and update a checklist item |
-| `kala_task_assignment` | resource | Assign an employee to a set of tasks on a case |
+| `kala_task_assignment` | resource | Assign an employee to a set of tasks on a case — refused on a restricted case the employee cannot access |
+| `kala_case_access` | resource | Grant an employee access to a case; destroy revokes, and access revoked in Kala is restored on the next apply |
 
 ### Behaviour worth knowing before you apply
 
@@ -292,8 +294,60 @@ is visible rather than hidden inside the provider.
 Assignee filtering is applied **client-side**, because Kala accepts no assignee
 parameter. It narrows the result without reducing what was read, which is why
 `complete` still describes the read. Only the responsible worker
-(`respWorkerNr`) is matched; the `workersAssigned` collection has never been
-observed populated, so its shape is unknown and it is not exposed.
+(`respWorkerNr`) is matched. The `workersAssigned` collection is not exposed on
+`kala_tasks`; per case, `kala_case_access` reports it as `assigned_employee_numbers`.
+
+### Case access: granted and assigned are different lists
+
+Kala keeps two lists per case, and `kala_case_access` reports both:
+
+- **`granted_employee_numbers`** — Kala's own access list: who may access the case, and so
+  register time on it, when the case is `restricted`.
+- **`assigned_employee_numbers`** — who is assigned to at least one of its tasks.
+
+**Being assigned does not grant access.** On a restricted case every assigned employee should
+also be granted, or they are assigned to tasks they cannot see. `assigned_without_access` lists
+exactly those employees, and is always empty on an unrestricted case, where everyone has access.
+Enforce the rule with a `check` block:
+
+```hcl
+check "assignees_have_access" {
+  assert {
+    condition     = length(data.kala_case_access.roof.assigned_without_access) == 0
+    error_message = "Assigned without access: ${join(", ", data.kala_case_access.roof.assigned_without_access)}"
+  }
+}
+```
+
+It fires as a warning on `plan`. Found this way live on 2026-09-29: an employee whose access to a
+restricted case had been revoked was still assigned to its task.
+
+**To enforce it rather than report it**, manage access with the `kala_case_access` resource. It
+grants one employee access to one case; destroying it revokes; and access revoked in the Kala UI
+is drift, so the next plan proposes restoring it. `kala_task_assignment` refuses — before
+writing anything — to assign an employee to a restricted case they cannot access, so reference
+the grant from it:
+
+```hcl
+resource "kala_case_access" "gimli_roof" {
+  case_number     = kala_case.roof.number
+  employee_number = 101
+}
+
+resource "kala_task_assignment" "gimli" {
+  case_number   = kala_case.roof.number
+  worker_number = 101
+  task_ids      = [kala_task.mount_gutter.id]
+  depends_on    = [kala_case_access.gimli_roof]
+}
+```
+
+If access is revoked after the assignment was made, refreshing the assignment warns rather than
+fails: the assignment is intact, and it is the access that needs restoring.
+
+The data source reads two endpoints and never writes. An unreadable access list is an error,
+never an empty one — on a restricted case an empty list would say nobody has access. Per-case
+roles (Kala's `rolesEnabled`) are not reported.
 
 ### Identifiers do not interchange
 
@@ -302,6 +356,7 @@ observed populated, so its shape is unknown and it is not exposed.
 | `kala_case.number` | string | e.g. `KA-1`. How a case is **addressed** |
 | `kala_case.id` | number | How a case is **referenced** by `kala_tasks.case_id` |
 | `kala_customer.number` | string | A **string** here; webapiv2 spells the same field as an integer, and the two are not known to hold the same value |
+| `kala_case_access.*_employee_numbers`, `assigned_without_access` | set of number | The same value as `kala_employee.employee_number` and `kala_employees.employees[*].number` — Kala's `workerNr`. Not `kala_employee.worker_id`, which maps a different upstream field that is only observed to be equal |
 
 `economy_case_number` mirrors `number` on every case observed, including
 Kala-native internal projects that have no e-conomic counterpart. Do not treat it

@@ -172,6 +172,20 @@ type InternalClient interface {
 	// GetCase reads one case by its string case number.
 	GetCase(ctx context.Context, caseNumber string) (CaseDetail, error)
 
+	// GetCaseAccess reads, for one case, the employees GRANTED access (Kala's
+	// access list, /api/GrantedWorkers/) and the employees ASSIGNED to its tasks.
+	// They are different lists: assignment is not access. See caseaccess.go.
+	//
+	// It reads the same case detail as GetCase but decodes it NARROWLY -- four
+	// fields, identifiers only -- so no personal data and no commercial figure
+	// is ever decoded on this path.
+	GetCaseAccess(ctx context.Context, caseNumber string) (CaseAccess, error)
+
+	// SetCaseAccess grants (true) or revokes (false) one employee's access to a
+	// case via POST /api/GrantAccess/, and verifies it by reading Kala's access
+	// list back. A write the read-back does not confirm is an error.
+	SetCaseAccess(ctx context.Context, caseNumber string, workerNr int64, granted bool) error
+
 	// SetCaseField sets one field on a case and verifies it by read-back.
 	//
 	// Reads the case first: every setter carries the value it expects to
@@ -645,7 +659,12 @@ func describeCompanies(companies []wireCompany) string {
 }
 
 func (c *internalAPI) signIn(ctx context.Context) (wireSignInResponse, error) {
-	body, err := json.Marshal(wireSignInRequest{
+	// Marshalling the password is the point of this request: /Auth/SignIn/ takes
+	// it in the body. It never reaches a log -- nothing in this file logs a
+	// request body -- and any error that might echo it is passed through
+	// sanitizeError, which redacts the "password" key. That path is pinned by
+	// TestSignInFailure_DoesNotLeakThePassword.
+	body, err := json.Marshal(wireSignInRequest{ //nolint:gosec // G117: see the comment above
 		Username: c.cfg.Username,
 		Password: c.cfg.Password,
 		AppType:  "web",

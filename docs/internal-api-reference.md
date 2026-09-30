@@ -69,6 +69,39 @@ Same entity, two identifier spellings across two endpoints.
 | `/api/RenameCaseCustomerPhoneNumber/` | POST | `caseNr` | carries `oldPhoneNumber` — `old`, not `previous` |
 | `/api/ChangeCaseCustomer/` | POST | `caseNr` | `newCustomerId` when assigning, `oldCustomerId` when converting to internal |
 | `/api/ArchiveCase/` | **GET** | `caseNr` (query) | a **write performed by GET** |
+| `/api/GetJobDetailsAdvanced/` | GET | `caseNr` (query) | the per-case read. **64 fields**; see below |
+
+**`GetJobDetailsAdvanced` embeds the checklist items, with their assigned workers.**
+Observed 2026-09-25. Alongside `caseId`, `restricted` and `checklistItemsTotal`, it carries
+`checklistItems[]`, and each item carries `workersAssigned[]`:
+
+```
+workersAssigned[0]: initials, isValidated, name, phone, title, workerImage, workerNr
+```
+
+So the case's **assignments** are readable in one call, without touching
+`/Case/GetChecklistItemsPaged/` and without pagination — the items are embedded, not paged.
+`checklistItemsTotal` against `len(checklistItems)` is the completeness check, and it is
+self-describing: the payload states how many items exist.
+
+**Assignment is not access.** Kala keeps a separate access list, found 2026-09-29 by capturing
+the UI's access panel:
+
+| Endpoint | Method | Keys on | Notes |
+|---|---|---|---|
+| `/api/GrantedWorkers/` | GET | `caseNr` (query) | `{"grantedWorkers":[<workerNr>…],"rolesEnabled":<bool>}` — plain numbers, no personal data. Unknown case → HTTP 500 |
+| `/api/GrantAccess/` | POST | `caseNr` (body) | `{"workerNumber":N,"caseNr":"…","access":<bool>,"role":[]}` — grant or revoke. A **write**, used by `kala_case_access` (ARCH1.3 #27). Keys on `workerNumber`, not `workerNr`. Response not characterised: every write is verified by reading `GrantedWorkers` back |
+
+The access list governs only a **restricted** case (`restricted` in the case detail); unrestricted
+cases observed have an empty list and everyone has access. On a restricted case an employee can be
+assigned to a task without being granted access — then they cannot see it. That state was found
+live on KA-2 after an access revocation left the assignment in place.
+
+`rolesEnabled` and `role:[]` suggest a per-case role model; `projectRoles` in the case detail was
+empty throughout, including on a restricted case. Unexplored.
+
+`workersAssigned` carries personal data — name, phone, title, image. Only `workerNr` may cross
+the client boundary (SEC1.5).
 
 **`CreateCase` must always send `newCustomer:false`.** Its body carries a full
 customer record, and `true` creates a customer as a side effect of creating a
@@ -129,6 +162,41 @@ explanation available.
 Server errors arrive as ASP.NET HTML pages whose only useful sentence is the
 `<title>`; the client extracts it.
 
+## Numbers are not integers
+
+**Observed 2026-09-25; fixed 2026-09-27.** `registeredHoursTotal` came back as **`0.25`** — a
+quarter hour. The client declared it, and every sibling hour and money field, as Go `int`, and a
+decimal in any of them was a **decode failure, not a rounding error** — the read died:
+
+```
+json: cannot unmarshal number 0.25 into Go struct field
+wireTasksPage.items.0.registeredHoursTotal of type int
+```
+
+One fractional value anywhere on a case took down the **entire** read for that case — `kala_tasks`,
+`kala_case`, `kala_cases` detail, and the `kala_case` resource's `Read`. It went unnoticed because no
+test fixture had ever carried a decimal.
+
+**The rule:** treat every Kala numeric as potentially fractional. Hours are quarter-hours and money
+has cents. Only **identifiers and counts** are safe as integers.
+
+| Field group | Declared now |
+|---|---|
+| `registeredHoursTotal`, `billedHours` (case and task) | `float64` |
+| `cost`, `sales`, `result`, `invoiced`, `uninvoiced`, `realised` | `float64` |
+| `priceFixed` (read and write) | `*float64` |
+| `caseTotalNormTime`, `caseTotalRegisteredHours` (task envelope) | **not declared** — never used, and a decode liability |
+
+**It was not a breaking change.** Earlier notes here and in the track that found the bug said
+moving `registered_hours_total` from `Int64` to `Float64` would break the schema. That was wrong:
+both are Terraform's single `number` type (`tftypes.Number`), so no configuration can observe the
+difference, the generated docs render both as `(Number)`, and state written under the `Int64`
+schema reads unchanged under `Float64`. An integral `float64` also marshals without a decimal
+point, so the write payload for an existing integer price is byte-identical. Each of those is
+pinned by a test.
+
+**Truncating would have been worse than failing:** it reports 0.25 hours as `0`, silently.
+
 ## Things that do not round-trip
 
 - **Task deadlines.** The create response echoes the millisecond value it was
@@ -151,6 +219,7 @@ There is no rule here, only a table.
 
 ## Observation dates
 
-Everything here was observed between **2026-09-07 and 2026-09-09** against a
-single-company tenant. Multi-company behaviour is untested: the `kacompany`
+Most of this was observed between **2026-09-07 and 2026-09-09**; the
+`GetJobDetailsAdvanced` shape and the decimal-numeric finding on **2026-09-25**,
+both against a single-company tenant. Multi-company behaviour is untested: the `kacompany`
 header is sent, but no account with several companies was available.

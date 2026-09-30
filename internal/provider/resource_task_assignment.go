@@ -28,6 +28,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -74,7 +75,13 @@ func (r *taskAssignmentResource) Schema(_ context.Context, _ resource.SchemaRequ
 			"same pair would overwrite each other on every apply.\n\n" +
 			"`terraform destroy` detaches the employee from each task it covers. Kala exposes " +
 			"no way to remove the underlying link itself, so the link may remain with nothing " +
-			"assigned to it.",
+			"assigned to it.\n\n" +
+			"**Assignment is not access.** On a restricted case the employee must also be on the " +
+			"case's access list, or they could not see the tasks. Create and update therefore fail " +
+			"— before anything is written — when the case is restricted and the employee has no " +
+			"access; refresh warns if access is revoked later. Grant access in Kala or with " +
+			"`kala_case_access`, and when that resource is in the same configuration, reference it " +
+			"with `depends_on` so the access exists before the assignment is made.",
 		Attributes: map[string]schema.Attribute{
 			"case_number": schema.StringAttribute{
 				Required:      true,
@@ -157,7 +164,7 @@ func (r *taskAssignmentResource) Create(ctx context.Context, req resource.Create
 		return
 	}
 
-	detail, err := internal.GetCase(ctx, plan.CaseNumber.ValueString())
+	access, err := internal.GetCaseAccess(ctx, plan.CaseNumber.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Could not find the case for this assignment",
@@ -166,7 +173,10 @@ func (r *taskAssignmentResource) Create(ctx context.Context, req resource.Create
 		)
 		return
 	}
-	plan.CaseID = types.Int64Value(detail.ID)
+	if !requireCaseAccess(access, plan.WorkerNumber.ValueInt64(), plan.CaseNumber.ValueString(), &resp.Diagnostics) {
+		return
+	}
+	plan.CaseID = types.Int64Value(access.CaseID)
 
 	wanted := taskIDsOf(ctx, plan.TaskIDs, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
@@ -263,18 +273,20 @@ func (r *taskAssignmentResource) Read(ctx context.Context, req resource.ReadRequ
 		return
 	}
 
-	// An imported resource knows only the case number, so resolve the id here
-	// as well as at create.
+	// One read serves two purposes with different failure modes. An imported
+	// resource knows only the case number, so the id must be resolved here --
+	// and without it nothing else can be read, so that failure is an ERROR. The
+	// access check is only a warning, so its failure is only a warning.
+	access, accessErr := internal.GetCaseAccess(ctx, state.CaseNumber.ValueString())
 	if state.CaseID.IsNull() || state.CaseID.ValueInt64() == 0 {
-		detail, err := internal.GetCase(ctx, state.CaseNumber.ValueString())
-		if err != nil {
+		if accessErr != nil {
 			resp.Diagnostics.AddError(
 				"Could not find the case for this assignment",
-				fmt.Sprintf("Case %s.\n\nError: %s", state.CaseNumber.ValueString(), err.Error()),
+				fmt.Sprintf("Case %s.\n\nError: %s", state.CaseNumber.ValueString(), accessErr.Error()),
 			)
 			return
 		}
-		state.CaseID = types.Int64Value(detail.ID)
+		state.CaseID = types.Int64Value(access.CaseID)
 	}
 
 	ids, err := internal.AssignedTaskIDs(
@@ -299,7 +311,48 @@ func (r *taskAssignmentResource) Read(ctx context.Context, req resource.ReadRequ
 	}
 
 	state.TaskIDs = taskIDSet(ids)
+	warnAboutCaseAccess(access, accessErr, state.WorkerNumber.ValueInt64(), state.CaseNumber.ValueString(), &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+}
+
+// requireCaseAccess enforces the rule on a WRITE: on a restricted case the
+// employee must be on the access list, or they could not see the tasks this
+// would assign them to. It reads Kala's list, not Terraform state, so access
+// granted in the Kala UI -- or by a kala_case_access earlier in the same apply
+// -- counts.
+func requireCaseAccess(a client.CaseAccess, worker int64, caseNumber string, diags *diag.Diagnostics) bool {
+	if !a.Restricted || slices.Contains(a.Granted, worker) {
+		return true
+	}
+	diags.AddAttributeError(path.Root("worker_number"),
+		fmt.Sprintf("Employee %d has no access to restricted case %s", worker, caseNumber),
+		fmt.Sprintf("Case %s is restricted and employee %d is not on its access list, so they could not "+
+			"see the tasks this would assign them to. Nothing was assigned.\n\n"+
+			"Grant access first — in Kala, or with a kala_case_access resource. If a kala_case_access in "+
+			"this configuration grants it, reference it from this resource, for example "+
+			"`depends_on = [kala_case_access.<name>]`, so Terraform grants before it assigns.",
+			caseNumber, worker))
+	return false
+}
+
+// warnAboutCaseAccess is the READ side of the rule: access revoked after the
+// assignment was made. Only a warning -- the assignment is intact, and
+// replacing it would not restore access; a kala_case_access resource does. If
+// access could not be checked at all, it says so rather than failing the
+// refresh.
+func warnAboutCaseAccess(a client.CaseAccess, err error, worker int64, caseNumber string, diags *diag.Diagnostics) {
+	if err != nil {
+		diags.AddAttributeWarning(path.Root("worker_number"), "Could not check case access",
+			fmt.Sprintf("The access list of case %s could not be read, so it is unknown whether employee %d "+
+				"can see the tasks they are assigned to.\n\nError: %s", caseNumber, worker, err))
+		return
+	}
+	if a.Restricted && !slices.Contains(a.Granted, worker) {
+		diags.AddAttributeWarning(path.Root("worker_number"), "Assigned without access",
+			fmt.Sprintf("Employee %d is assigned to tasks on restricted case %s but has no access to it, so "+
+				"they cannot see those tasks. Restore the access in Kala, or manage it with a "+
+				"kala_case_access resource.", worker, caseNumber))
+	}
 }
 
 func (r *taskAssignmentResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -311,6 +364,19 @@ func (r *taskAssignmentResource) Update(ctx context.Context, req resource.Update
 	}
 	internal, ok := r.clients.requireInternal(&resp.Diagnostics)
 	if !ok {
+		return
+	}
+
+	access, err := internal.GetCaseAccess(ctx, plan.CaseNumber.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Could not read the case for this assignment",
+			fmt.Sprintf("Case %s could not be read, so the assignment was not changed.\n\nError: %s",
+				plan.CaseNumber.ValueString(), err.Error()),
+		)
+		return
+	}
+	if !requireCaseAccess(access, plan.WorkerNumber.ValueInt64(), plan.CaseNumber.ValueString(), &resp.Diagnostics) {
 		return
 	}
 

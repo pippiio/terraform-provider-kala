@@ -7,6 +7,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	fwschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -355,7 +356,7 @@ func TestReadAssignment_ImportedResourceResolvesTheCaseID(t *testing.T) {
 
 func TestAssignment_FailuresPropagate(t *testing.T) {
 	for name, setup := range map[string]func(*fakeInternal){
-		"case lookup":   func(f *fakeInternal) { f.getCaseErr = errContext("nope") },
+		"case lookup":   func(f *fakeInternal) { f.getCaseErr = errContext("nope"); f.getCaseAccessErr = errContext("nope") },
 		"link":          func(f *fakeInternal) { f.ensureLinkErr = errContext("nope") },
 		"set checklist": func(f *fakeInternal) { f.setChecklistErr = errContext("nope") },
 		"read back":     func(f *fakeInternal) { f.assignedErr = errContext("nope") },
@@ -378,7 +379,7 @@ func TestAssignment_FailuresPropagate(t *testing.T) {
 
 func TestReadAssignment_FailuresPropagate(t *testing.T) {
 	for name, setup := range map[string]func(*fakeInternal){
-		"case lookup": func(f *fakeInternal) { f.getCaseErr = errContext("nope") },
+		"case lookup": func(f *fakeInternal) { f.getCaseErr = errContext("nope"); f.getCaseAccessErr = errContext("nope") },
 		"assignment":  func(f *fakeInternal) { f.assignedErr = errContext("nope") },
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -495,5 +496,153 @@ func TestTaskIDsOf_NullAndUnknownAreNil(t *testing.T) {
 	}
 	if diags.HasError() {
 		t.Errorf("neither is an error: %v", diags)
+	}
+}
+
+// --- Access guard ---------------------------------------------------------------
+//
+// On a RESTRICTED case, an employee assigned to a task must also be granted
+// access, or they cannot see the task. Case KA-2 was found live with that
+// broken. Decisions (2026-09-29): Create and Update FAIL, before any write;
+// Read only WARNS, because the assignment itself is intact and replacing it
+// would not restore access. The check is against Kala's access list at apply
+// time, so access granted in the UI -- or by a kala_case_access in the same
+// apply -- counts.
+
+func restrictedCase(fi *fakeInternal, granted ...int64) *fakeInternal {
+	if fi.caseAccess == nil {
+		fi.caseAccess = map[string]client.CaseAccess{}
+	}
+	fi.caseAccess["KA-4"] = client.CaseAccess{CaseID: 4, Restricted: true, Granted: granted}
+	return fi
+}
+
+func diagOnWorkerNumber(t *testing.T, diags interface{ Errors() diag.Diagnostics }) bool {
+	t.Helper()
+	for _, d := range diags.Errors() {
+		if dp, ok := d.(interface{ Path() path.Path }); ok && dp.Path().Equal(path.Root("worker_number")) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestCreateAssignment_RestrictedWithoutAccessFailsBeforeAnyWrite(t *testing.T) {
+	fi := restrictedCase(fakeWithTasks()) // nobody granted
+	r := newAssignmentResource(fi)
+	resp := &resource.CreateResponse{State: emptyAssignState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: assignPlan(t, plannedAssignment(1))}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("assigning an employee without access on a restricted case must fail")
+	}
+	if !diagOnWorkerNumber(t, resp.Diagnostics) {
+		t.Errorf("the error must point at worker_number; got %s", diagsText(resp.Diagnostics))
+	}
+	if !strings.Contains(diagsText(resp.Diagnostics), "kala_case_access") {
+		t.Errorf("the error must say how to grant access; got %s", diagsText(resp.Diagnostics))
+	}
+	if len(fi.ensureLinkCalls) != 0 || len(fi.setChecklistCalls) != 0 {
+		t.Errorf("nothing may be written: links %v, checklists %v", fi.ensureLinkCalls, fi.setChecklistCalls)
+	}
+}
+
+func TestCreateAssignment_RestrictedWithAccessSucceeds(t *testing.T) {
+	fi := restrictedCase(fakeWithTasks(), 1)
+	r := newAssignmentResource(fi)
+	resp := &resource.CreateResponse{State: emptyAssignState(t)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: assignPlan(t, plannedAssignment(1))}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("an employee with access may be assigned: %s", diagsText(resp.Diagnostics))
+	}
+}
+
+func TestUpdateAssignment_RestrictedWithoutAccessFailsBeforeAnyWrite(t *testing.T) {
+	fi := restrictedCase(fakeWithTasks())
+	r := newAssignmentResource(fi)
+	state, plan := existingAssignment(1), existingAssignment(2, 3)
+	resp := &resource.UpdateResponse{State: assignState(t, state)}
+	r.Update(context.Background(),
+		resource.UpdateRequest{Plan: assignPlan(t, plan), State: assignState(t, state)}, resp)
+
+	if !resp.Diagnostics.HasError() || !diagOnWorkerNumber(t, resp.Diagnostics) {
+		t.Fatalf("want an error on worker_number; got %s", diagsText(resp.Diagnostics))
+	}
+	if len(fi.ensureLinkCalls) != 0 || len(fi.setChecklistCalls) != 0 {
+		t.Errorf("nothing may be written: links %v, checklists %v", fi.ensureLinkCalls, fi.setChecklistCalls)
+	}
+}
+
+func readAssignmentWith(t *testing.T, fi *fakeInternal) *resource.ReadResponse {
+	t.Helper()
+	fi.tasks[1] = client.Task{ID: 1, CaseID: 4, CaseNumber: "KA-4", AssignedWorkerNrs: []int64{1}}
+	m := existingAssignment(1)
+	resp := &resource.ReadResponse{State: assignState(t, m)}
+	newAssignmentResource(fi).Read(context.Background(), resource.ReadRequest{State: assignState(t, m)}, resp)
+	return resp
+}
+
+// Access revoked after the assignment was made: warn, never error, never remove.
+func TestReadAssignment_RestrictedWithoutAccessWarns(t *testing.T) {
+	resp := readAssignmentWith(t, restrictedCase(fakeWithTasks()))
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Read must not error: %s", diagsText(resp.Diagnostics))
+	}
+	if resp.State.Raw.IsNull() {
+		t.Fatal("the assignment is intact and must stay in state")
+	}
+	if resp.Diagnostics.WarningsCount() == 0 || !strings.Contains(diagsText(resp.Diagnostics), "access") {
+		t.Errorf("want a warning about missing access; got %s", diagsText(resp.Diagnostics))
+	}
+}
+
+func TestReadAssignment_RestrictedWithAccessDoesNotWarn(t *testing.T) {
+	resp := readAssignmentWith(t, restrictedCase(fakeWithTasks(), 1))
+	if resp.Diagnostics.HasError() || resp.Diagnostics.WarningsCount() != 0 {
+		t.Errorf("an employee with access needs no warning; got %s", diagsText(resp.Diagnostics))
+	}
+}
+
+// Fail-soft (D7): if access cannot be checked, say so -- do not fail the
+// refresh, or a change to GrantedWorkers would break every assignment.
+func TestReadAssignment_AccessCheckFailureOnlyWarns(t *testing.T) {
+	fi := fakeWithTasks()
+	fi.getCaseAccessErr = errContext("GrantedWorkers unavailable")
+	resp := readAssignmentWith(t, fi)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("an unavailable access list must not fail the refresh: %s", diagsText(resp.Diagnostics))
+	}
+	if resp.Diagnostics.WarningsCount() == 0 || !strings.Contains(strings.ToLower(diagsText(resp.Diagnostics)), "could not") {
+		t.Errorf("want a warning that access could not be checked; got %s", diagsText(resp.Diagnostics))
+	}
+}
+
+// On a WRITE the guard fails closed: if access cannot be checked, nothing is
+// changed. (Read is the opposite -- it only warns -- because it writes nothing.)
+func TestUpdateAssignment_UncheckableAccessChangesNothing(t *testing.T) {
+	fi := fakeWithTasks()
+	fi.getCaseAccessErr = errContext("GrantedWorkers unavailable")
+	r := newAssignmentResource(fi)
+	state, plan := existingAssignment(1), existingAssignment(2, 3)
+	resp := &resource.UpdateResponse{State: assignState(t, state)}
+	r.Update(context.Background(),
+		resource.UpdateRequest{Plan: assignPlan(t, plan), State: assignState(t, state)}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("an update whose access cannot be checked must fail")
+	}
+	if len(fi.ensureLinkCalls) != 0 || len(fi.setChecklistCalls) != 0 {
+		t.Errorf("nothing may be written: links %v, checklists %v", fi.ensureLinkCalls, fi.setChecklistCalls)
+	}
+}
+
+// The guard is behaviour a user meets as an apply failure; the description is
+// where they should meet it first.
+func TestTaskAssignment_SchemaDescribesTheAccessGuard(t *testing.T) {
+	d := strings.ToLower(assignSchema(t).MarkdownDescription)
+	for _, want := range []string{"restricted", "kala_case_access", "depends_on"} {
+		if !strings.Contains(d, want) {
+			t.Errorf("the description must mention %q; got: %s", want, d)
+		}
 	}
 }

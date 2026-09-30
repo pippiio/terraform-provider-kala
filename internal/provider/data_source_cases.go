@@ -301,14 +301,14 @@ type caseDataSourceModel struct {
 	EndDate                 types.String `tfsdk:"end_date"`
 	Deadline                types.String `tfsdk:"deadline"`
 
-	Cost                 types.Int64 `tfsdk:"cost"`
-	Sales                types.Int64 `tfsdk:"sales"`
-	Result               types.Int64 `tfsdk:"result"`
-	Invoiced             types.Int64 `tfsdk:"invoiced"`
-	Uninvoiced           types.Int64 `tfsdk:"uninvoiced"`
-	Realised             types.Int64 `tfsdk:"realised"`
-	RegisteredHoursTotal types.Int64 `tfsdk:"registered_hours_total"`
-	BilledHours          types.Int64 `tfsdk:"billed_hours"`
+	Cost                 types.Float64 `tfsdk:"cost"`
+	Sales                types.Float64 `tfsdk:"sales"`
+	Result               types.Float64 `tfsdk:"result"`
+	Invoiced             types.Float64 `tfsdk:"invoiced"`
+	Uninvoiced           types.Float64 `tfsdk:"uninvoiced"`
+	Realised             types.Float64 `tfsdk:"realised"`
+	RegisteredHoursTotal types.Float64 `tfsdk:"registered_hours_total"`
+	BilledHours          types.Float64 `tfsdk:"billed_hours"`
 }
 
 func (d *caseDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -347,7 +347,7 @@ func (d *caseDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, r
 		"invoiced": "Amount invoiced", "uninvoiced": "Amount not yet invoiced", "realised": "Realised value",
 		"registered_hours_total": "Hours registered on the case", "billed_hours": "Hours billed",
 	} {
-		attrs[name] = schema.Int64Attribute{
+		attrs[name] = schema.Float64Attribute{
 			Computed:            true,
 			MarkdownDescription: desc + ". **Null unless `include_financials` is set.**",
 		}
@@ -437,14 +437,14 @@ func (d *caseDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 		EndDate:                 rfc3339OrNull(detail.EndDate),
 		Deadline:                rfc3339OrNull(detail.Deadline),
 
-		Cost:                 int64OrNull(detail.Cost, fin),
-		Sales:                int64OrNull(detail.Sales, fin),
-		Result:               int64OrNull(detail.Result, fin),
-		Invoiced:             int64OrNull(detail.Invoiced, fin),
-		Uninvoiced:           int64OrNull(detail.Uninvoiced, fin),
-		Realised:             int64OrNull(detail.Realised, fin),
-		RegisteredHoursTotal: int64OrNull(detail.RegisteredHoursTotal, fin),
-		BilledHours:          int64OrNull(detail.BilledHours, fin),
+		Cost:                 float64OrNull(detail.Cost, fin),
+		Sales:                float64OrNull(detail.Sales, fin),
+		Result:               float64OrNull(detail.Result, fin),
+		Invoiced:             float64OrNull(detail.Invoiced, fin),
+		Uninvoiced:           float64OrNull(detail.Uninvoiced, fin),
+		Realised:             float64OrNull(detail.Realised, fin),
+		RegisteredHoursTotal: float64OrNull(detail.RegisteredHoursTotal, fin),
+		BilledHours:          float64OrNull(detail.BilledHours, fin),
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -514,10 +514,14 @@ func rfc3339OrNull(t *time.Time) types.String {
 	return types.StringValue(t.UTC().Format(time.RFC3339))
 }
 
-// int64OrNull gates a value behind an opt-in, preserving null when withheld.
-func int64OrNull(v int, include bool) types.Int64 {
+// float64OrNull gates a value behind an opt-in, preserving null when withheld.
+//
+// Float64, not Int64: hours and money are fractional upstream. Both are
+// Terraform's single `number` type, so the change is invisible to any
+// configuration that reads these attributes.
+func float64OrNull(v float64, include bool) types.Float64 {
 	if !include {
-		return types.Int64Null()
+		return types.Float64Null()
 	}
-	return types.Int64Value(int64(v))
+	return types.Float64Value(v)
 }
