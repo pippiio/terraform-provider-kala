@@ -61,6 +61,8 @@ func newFieldMock(t *testing.T) *fieldMock {
 		if strings.HasSuffix(r.URL.Path, "/api/Workers/") {
 			_ = json.NewEncoder(w).Encode([]map[string]any{
 				{"workerNr": 3, "workerId": 7, "name": "Gimli", "isValidated": true},
+				// A listed worker with no internal id at all.
+				{"workerNr": 4, "name": "Nobody", "isValidated": true},
 			})
 			return
 		}
@@ -326,6 +328,11 @@ func TestSetWorkerDateOfEmployment_UnverifiedWriteFails(t *testing.T) {
 		case strings.Contains(r.URL.Path, "WorkerInfo"):
 			// The offset hazard in miniature: stored a day off what was sent.
 			_, _ = w.Write([]byte(`{"workerNr":3,"dateOfEmployment":"2026-03-14"}`))
+		case strings.HasSuffix(r.URL.Path, "/api/Workers/"):
+			// ChangeDateOfEmployment keys on the internal id, so the client
+			// resolves it first; without this the test would stop there and
+			// never reach the read-back it exists to exercise.
+			_, _ = w.Write([]byte(`[{"workerNr":3,"workerId":7}]`))
 		default:
 			w.WriteHeader(http.StatusOK)
 		}
@@ -703,5 +710,30 @@ func TestChangeEndpoints_UnknownEmployeeFailsBeforeWriting(t *testing.T) {
 		if strings.Contains(p, "Change") {
 			t.Errorf("nothing may be written for an unknown employee; got %s", p)
 		}
+	}
+}
+
+func TestSetWorkerDateOfEmployment_UnknownEmployeeFailsBeforeWriting(t *testing.T) {
+	m := newFieldMock(t)
+	err := m.client().SetWorkerDateOfEmployment(context.Background(), 99, "2026-09-01")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("want ErrNotFound for an unknown employee number, got %v", err)
+	}
+	if len(m.paths) != 0 {
+		t.Errorf("nothing may be written; got %v", m.paths)
+	}
+}
+
+// A worker listed without an internal id cannot be addressed by a Change*
+// endpoint. Sending 0 would at best fail and at worst hit whatever worker Kala
+// resolves 0 to, so it must be refused before writing.
+func TestChangeEndpoints_WorkerWithoutInternalIDFailsBeforeWriting(t *testing.T) {
+	m := newFieldMock(t)
+	err := m.client().SetWorkerField(context.Background(), 4, FieldDepartment, "CPH")
+	if err == nil || !strings.Contains(err.Error(), "internal id") {
+		t.Fatalf("want an error about the missing internal id, got %v", err)
+	}
+	if len(m.paths) != 0 {
+		t.Errorf("nothing may be written; got %v", m.paths)
 	}
 }

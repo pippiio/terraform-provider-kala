@@ -21,6 +21,14 @@ import (
 //     ChangeLeaderNote, and ChangeDateOfEmployment do not — but
 //     ChangeWorkerName and ChangeBoss do.
 //
+//  3. The VALUE differs too. workerID/workerId on the Change* endpoints is
+//     Kala's INTERNAL worker id, not the employee number, and the two differ:
+//     employee 23 in tenant 17221 has workerId 5. Sending the employee number
+//     fails with "Sequence contains no elements" -- or, where another worker
+//     has that id, writes to THEM. Found 2026-09-30 by a production apply;
+//     the 2026-09-01 note that the values were "identical" was drawn from a
+//     single freshly created employee, where they happened to coincide.
+//
 // In other words there is no rule, only a table. Both properties are captured
 // per-endpoint below so no caller has to remember them, and each entry records
 // what was observed rather than what the pattern would predict.
@@ -31,11 +39,14 @@ type workerFieldSpec struct {
 	// expects it.
 	endpoint string
 
-	// idKey is the JSON key carrying the worker identifier: "workerNr" or
-	// "workerID". The VALUE is the same either way — medarbejderNr, workerNr,
-	// workerId, and employeeNumber were confirmed identical on 2026-09-01 —
-	// but the key is not.
+	// idKey is the JSON key carrying the worker identifier: "workerNr",
+	// "workerID" or "workerId".
 	idKey string
+
+	// internalID says the endpoint wants Kala's INTERNAL worker id rather than
+	// the employee number. True for every Change* endpoint keyed on
+	// workerID/workerId; the two values differ in general (see point 3 above).
+	internalID bool
 
 	// valueKey is the JSON key carrying the new value.
 	valueKey string
@@ -77,11 +88,11 @@ var workerFieldSpecs = map[WorkerField]workerFieldSpec{
 	},
 	// Note: no trailing slash, and workerID rather than workerNr.
 	FieldDepartment: {
-		endpoint: "/api/ChangeWorkerDepartment", idKey: "workerID", valueKey: "department",
+		endpoint: "/api/ChangeWorkerDepartment", idKey: "workerID", internalID: true, valueKey: "department",
 		readBack: func(w WorkerInfo) string { return w.Department },
 	},
 	FieldLeaderNote: {
-		endpoint: "/api/ChangeLeaderNote", idKey: "workerID", valueKey: "leaderNote",
+		endpoint: "/api/ChangeLeaderNote", idKey: "workerID", internalID: true, valueKey: "leaderNote",
 		readBack: func(w WorkerInfo) string { return w.LeaderNote },
 	},
 	// Breaks BOTH of the patterns above: a Change* endpoint that keeps the
@@ -91,7 +102,7 @@ var workerFieldSpecs = map[WorkerField]workerFieldSpec{
 	// what Kala's own web client sends, which is the only variant it is safe to
 	// assume will keep working.
 	FieldName: {
-		endpoint: "/api/ChangeWorkerName/", idKey: "workerId", valueKey: "newName",
+		endpoint: "/api/ChangeWorkerName/", idKey: "workerId", internalID: true, valueKey: "newName",
 		readBack: func(w WorkerInfo) string { return w.Name },
 	},
 }
@@ -133,8 +144,17 @@ func (c *internalAPI) SetWorkerField(ctx context.Context, workerNr int64, field 
 		return fmt.Errorf("kala: unknown worker field %q", field)
 	}
 
+	id := workerNr
+	if spec.internalID {
+		resolved, err := c.internalWorkerID(ctx, workerNr)
+		if err != nil {
+			return fmt.Errorf("kala: setting %s for worker %d: %w", field, workerNr, err)
+		}
+		id = resolved
+	}
+
 	payload := map[string]any{
-		spec.idKey:    workerNr,
+		spec.idKey:    id,
 		spec.valueKey: value,
 	}
 	if err := c.postJSON(ctx, spec.endpoint, payload); err != nil {
@@ -195,8 +215,12 @@ func (c *internalAPI) SetWorkerDateOfEmployment(ctx context.Context, workerNr in
 		return fmt.Errorf("date of employment must be a plain date in YYYY-MM-DD form, got %q", date)
 	}
 
+	id, err := c.internalWorkerID(ctx, workerNr)
+	if err != nil {
+		return fmt.Errorf("kala: setting date of employment for worker %d: %w", workerNr, err)
+	}
 	payload := map[string]any{
-		"workerID":            workerNr, // note: workerID, not workerNr
+		"workerID":            id, // Kala's INTERNAL id, not the employee number
 		"newDateOfEmployment": date + "T00:00:00.000Z",
 		"gmtOffset":           0, // midnight UTC at offset 0 cannot shift the date
 	}
@@ -223,6 +247,21 @@ func isISODate(s string) bool {
 	}
 	_, err := time.Parse("2006-01-02", s)
 	return err == nil
+}
+
+// internalWorkerID maps an employee number to Kala's internal worker id, which
+// the Change* endpoints key on. It fails -- before anything is written -- when
+// no worker has that employee number: there is no id to send, and guessing one
+// could write to somebody else.
+func (c *internalAPI) internalWorkerID(ctx context.Context, workerNr int64) (int64, error) {
+	w, err := c.GetWorker(ctx, workerNr)
+	if err != nil {
+		return 0, fmt.Errorf("resolving Kala's internal id: %w", err)
+	}
+	if w.WorkerID == 0 {
+		return 0, fmt.Errorf("resolving Kala's internal id: worker %d has none in the worker list", workerNr)
+	}
+	return w.WorkerID, nil
 }
 
 // postJSON sends an authenticated JSON POST to the internal API.
