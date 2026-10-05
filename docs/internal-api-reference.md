@@ -147,7 +147,7 @@ There is no rule here, only a table.
 | Case | `caseNr` (**string**) | `caseId` (**int**) |
 | Checklist item | `cliId` (int) | `Id` (int) |
 | Job link | `jobLinkId` (int) | `id` (int) |
-| Employee | `workerNr`, `workerID`, `workerId` | `workerNr` |
+| Employee | `workerNr` (employee number) on Set\*, ChangeBoss, SetValidated, SetEmailNew, GrantAccess (as `workerNumber`); **`workerID`/`workerId` = Kala's INTERNAL id** on ChangeWorkerDepartment, ChangeLeaderNote, ChangeWorkerName, ChangeDateOfEmployment | `workerNr` and `workerId` — **different values** (employee 23 has id 5). Sending the employee number where the internal id is expected fails with *Sequence contains no elements*, or writes to another worker |
 
 ## Observation dates
 

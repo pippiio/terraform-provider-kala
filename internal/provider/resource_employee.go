@@ -184,8 +184,9 @@ func (r *employeeResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			},
 			"worker_id": schema.Int64Attribute{
 				Computed: true,
-				MarkdownDescription: "Kala's internal worker ID. Observed to equal `employee_number`, but " +
-					"exposed separately in case they ever diverge.",
+				MarkdownDescription: "Kala's internal worker ID. **Not** the same value as " +
+					"`employee_number` in general — an employee created with number 23 can have id 5 — " +
+					"which is why the provider looks it up rather than assuming it.",
 				// Stable for the life of the resource, so hold the known value
 				// rather than showing "(known after apply)" on every update.
 				PlanModifiers: []planmodifier.Int64{int64planmodifier.UseStateForUnknown()},

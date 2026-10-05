@@ -28,7 +28,12 @@ type fieldMock struct {
 
 func newFieldMock(t *testing.T) *fieldMock {
 	t.Helper()
-	m := &fieldMock{info: map[string]any{"workerNr": 3, "workerId": 3}}
+	// Employee number 3, internal id 7 -- DIFFERENT on purpose. This fixture
+	// used to say 3 and 3, which baked in the assumption that the two are one
+	// value, and so could never catch the defect it hid: the Change* endpoints
+	// key on the INTERNAL id. Observed live 2026-09-30, where employee 23 has
+	// workerId 5, and a production apply failed on employee 50.
+	m := &fieldMock{info: map[string]any{"workerNr": 3, "workerId": 7}}
 
 	m.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -51,6 +56,16 @@ func newFieldMock(t *testing.T) *fieldMock {
 			_ = json.NewEncoder(w).Encode(m.info)
 			return
 		}
+		// The worker list: how the client maps an employee number to Kala's
+		// internal id. A read, so it is not recorded among the writes.
+		if strings.HasSuffix(r.URL.Path, "/api/Workers/") {
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{"workerNr": 3, "workerId": 7, "name": "Gimli", "isValidated": true},
+				// A listed worker with no internal id at all.
+				{"workerNr": 4, "name": "Nobody", "isValidated": true},
+			})
+			return
+		}
 
 		m.paths = append(m.paths, r.URL.Path)
 		body := make([]byte, r.ContentLength)
@@ -58,6 +73,23 @@ func newFieldMock(t *testing.T) *fieldMock {
 		var parsed map[string]any
 		_ = json.Unmarshal(body, &parsed)
 		m.bodies = append(m.bodies, parsed)
+
+		// Reject what the real API rejects. The Change* endpoints look the worker
+		// up by INTERNAL id and answer an unknown one with an ASP.NET 500 whose
+		// only useful text is its <title> -- reproduced exactly from the live
+		// tenant, where sending the employee number gave this error.
+		if strings.Contains(r.URL.Path, "/api/ChangeWorker") || strings.Contains(r.URL.Path, "/api/ChangeLeaderNote") ||
+			strings.Contains(r.URL.Path, "/api/ChangeDateOfEmployment") {
+			id, ok := parsed["workerID"].(float64)
+			if !ok {
+				id, _ = parsed["workerId"].(float64)
+			}
+			if int64(id) != 7 {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`<html><head><title>Sequence contains no elements</title></head></html>`))
+				return
+			}
+		}
 
 		// Reflect the write into the WorkerInfo the mock serves back.
 		if m.noReflect {
@@ -296,6 +328,11 @@ func TestSetWorkerDateOfEmployment_UnverifiedWriteFails(t *testing.T) {
 		case strings.Contains(r.URL.Path, "WorkerInfo"):
 			// The offset hazard in miniature: stored a day off what was sent.
 			_, _ = w.Write([]byte(`{"workerNr":3,"dateOfEmployment":"2026-03-14"}`))
+		case strings.HasSuffix(r.URL.Path, "/api/Workers/"):
+			// ChangeDateOfEmployment keys on the internal id, so the client
+			// resolves it first; without this the test would stop there and
+			// never reach the read-back it exists to exercise.
+			_, _ = w.Write([]byte(`[{"workerNr":3,"workerId":7}]`))
 		default:
 			w.WriteHeader(http.StatusOK)
 		}
@@ -622,5 +659,81 @@ func TestSetWorkerBoss_UnverifiableWriteIsAnError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "could not verify") {
 		t.Errorf("error should say verification failed, got %q", err.Error())
+	}
+}
+
+// The Change* endpoints key on Kala's INTERNAL worker id, not the employee
+// number. Sending the employee number is exactly what failed in production:
+// "Sequence contains no elements" on employee 50. Worse, where some OTHER
+// employee happens to have that id, the write would land on them.
+func TestChangeEndpoints_SendTheInternalWorkerID(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		idKey string
+		write func(InternalClient) error
+	}{
+		{"department", "workerID", func(c InternalClient) error {
+			return c.SetWorkerField(context.Background(), 3, FieldDepartment, "CPH")
+		}},
+		{"leader note", "workerID", func(c InternalClient) error {
+			return c.SetWorkerField(context.Background(), 3, FieldLeaderNote, "note")
+		}},
+		{"name", "workerId", func(c InternalClient) error {
+			return c.SetWorkerField(context.Background(), 3, FieldName, "Gimli son of Glóin")
+		}},
+		{"date of employment", "workerID", func(c InternalClient) error {
+			return c.SetWorkerDateOfEmployment(context.Background(), 3, "2026-09-01")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newFieldMock(t)
+			if err := tc.write(m.client()); err != nil {
+				t.Fatalf("write for employee 3 (internal id 7) failed: %v", err)
+			}
+			if got, _ := m.bodies[len(m.bodies)-1][tc.idKey].(float64); got != 7 {
+				t.Errorf("%s = %v, want 7 — the internal id, not employee number 3", tc.idKey, got)
+			}
+		})
+	}
+}
+
+// An employee number with no worker behind it must fail before anything is
+// written: there is no internal id to send, and guessing one could write to
+// somebody else.
+func TestChangeEndpoints_UnknownEmployeeFailsBeforeWriting(t *testing.T) {
+	m := newFieldMock(t)
+	err := m.client().SetWorkerField(context.Background(), 99, FieldDepartment, "CPH")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("want ErrNotFound for an unknown employee number, got %v", err)
+	}
+	for _, p := range m.paths {
+		if strings.Contains(p, "Change") {
+			t.Errorf("nothing may be written for an unknown employee; got %s", p)
+		}
+	}
+}
+
+func TestSetWorkerDateOfEmployment_UnknownEmployeeFailsBeforeWriting(t *testing.T) {
+	m := newFieldMock(t)
+	err := m.client().SetWorkerDateOfEmployment(context.Background(), 99, "2026-09-01")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("want ErrNotFound for an unknown employee number, got %v", err)
+	}
+	if len(m.paths) != 0 {
+		t.Errorf("nothing may be written; got %v", m.paths)
+	}
+}
+
+// A worker listed without an internal id cannot be addressed by a Change*
+// endpoint. Sending 0 would at best fail and at worst hit whatever worker Kala
+// resolves 0 to, so it must be refused before writing.
+func TestChangeEndpoints_WorkerWithoutInternalIDFailsBeforeWriting(t *testing.T) {
+	m := newFieldMock(t)
+	err := m.client().SetWorkerField(context.Background(), 4, FieldDepartment, "CPH")
+	if err == nil || !strings.Contains(err.Error(), "internal id") {
+		t.Fatalf("want an error about the missing internal id, got %v", err)
+	}
+	if len(m.paths) != 0 {
+		t.Errorf("nothing may be written; got %v", m.paths)
 	}
 }

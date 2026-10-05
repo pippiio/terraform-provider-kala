@@ -161,7 +161,7 @@ This only takes effect at creation; changing it afterwards does nothing.
 - `is_visible_in_planner` (Boolean) Whether the employee appears in the planner. Read-only — Kala exposes no endpoint to set it.
 - `norm_hours` (String) Contracted normal hours, **as an opaque string**. Kala returns JSON embedded in a string here rather than a number — observed as `{"normHours": 37}`. It is passed through verbatim rather than unwrapped, because the shape is undocumented and may vary. Parse it with `jsondecode()` if you need the value.
 - `private_phone` (String) Private phone number. Read-only — Kala exposes no endpoint to set it.
-- `worker_id` (Number) Kala's internal worker ID. Observed to equal `employee_number`, but exposed separately in case they ever diverge.
+- `worker_id` (Number) Kala's internal worker ID. **Not** the same value as `employee_number` in general — an employee created with number 23 can have id 5 — which is why the provider looks it up rather than assuming it.
 
 ## Import
 
