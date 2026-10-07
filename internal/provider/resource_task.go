@@ -66,8 +66,8 @@ type taskResourceModel struct {
 	NoteRequired  types.Bool `tfsdk:"note_required"`
 	ImageRequired types.Bool `tfsdk:"image_required"`
 
-	InvoiceMode types.String `tfsdk:"invoice_mode"`
-	PriceFixed  types.Int64  `tfsdk:"price_fixed"`
+	InvoiceMode types.String  `tfsdk:"invoice_mode"`
+	PriceFixed  types.Float64 `tfsdk:"price_fixed"`
 
 	IsFinished       types.Bool  `tfsdk:"is_finished"`
 	AssigneeWorkerNr types.Int64 `tfsdk:"assignee_worker_number"`
@@ -137,9 +137,10 @@ func (r *taskResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 				MarkdownDescription: "How the task is invoiced, e.g. `REG_HOURS&STANDARD`. " +
 					"Treated as an opaque tenant value rather than a validated enum.",
 			},
-			"price_fixed": schema.Int64Attribute{
-				Optional:            true,
-				MarkdownDescription: "Fixed price, when one applies. Null means no fixed price.",
+			"price_fixed": schema.Float64Attribute{
+				Optional: true,
+				MarkdownDescription: "Fixed price, when one applies. Null means no fixed price. " +
+					"Fractional values are accepted — Kala prices carry cents.",
 			},
 			"is_finished": schema.BoolAttribute{
 				Computed: true,
@@ -203,7 +204,7 @@ func (m taskResourceModel) toInput() (client.TaskInput, error) {
 		InvoiceMode:   m.InvoiceMode.ValueString(),
 	}
 	if !m.PriceFixed.IsNull() && !m.PriceFixed.IsUnknown() {
-		p := int(m.PriceFixed.ValueInt64())
+		p := m.PriceFixed.ValueFloat64()
 		in.PriceFixed = &p
 	}
 	return in, nil
@@ -226,9 +227,9 @@ func applyTask(m *taskResourceModel, k client.Task) {
 		m.Deadline = types.StringValue(k.Deadline.UTC().Truncate(time.Second).Format(taskDeadlineLayout))
 	}
 	if k.PriceFixed == nil {
-		m.PriceFixed = types.Int64Null()
+		m.PriceFixed = types.Float64Null()
 	} else {
-		m.PriceFixed = types.Int64Value(int64(*k.PriceFixed))
+		m.PriceFixed = types.Float64Value(*k.PriceFixed)
 	}
 	if k.AssigneeWorkerNr == nil {
 		m.AssigneeWorkerNr = types.Int64Null()

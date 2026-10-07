@@ -82,10 +82,10 @@ type Task struct {
 	TimeFinished *time.Time
 	FinishedBy   string
 
-	RegisteredHoursTotal int
-	BilledHours          int
+	RegisteredHoursTotal float64
+	BilledHours          float64
 	InvoiceMode          string
-	PriceFixed           *int
+	PriceFixed           *float64
 
 	NoteRequired  bool
 	ImageRequired bool
@@ -163,10 +163,10 @@ type wireTask struct {
 	IsFinished       bool   `json:"isFinished"`
 	WorkerFinishedBy string `json:"workerFinishedBy"`
 
-	RegisteredHoursTotal int    `json:"registeredHoursTotal"`
-	BilledHours          int    `json:"billedHours"`
-	InvoiceMode          string `json:"invoiceMode"`
-	PriceFixed           *int   `json:"priceFixed"`
+	RegisteredHoursTotal float64  `json:"registeredHoursTotal"`
+	BilledHours          float64  `json:"billedHours"`
+	InvoiceMode          string   `json:"invoiceMode"`
+	PriceFixed           *float64 `json:"priceFixed"`
 
 	NoteRequired  bool `json:"noteRequired"`
 	ImageRequired bool `json:"imageRequired"`
@@ -179,12 +179,14 @@ type wireTask struct {
 // items:[] and totalCount absent, whereas a real case with no tasks returns
 // totalCount:0. A plain int would collapse the two into "empty and complete".
 type wireTasksPage struct {
-	Items                    []wireTask `json:"items"`
-	TotalCount               *int       `json:"totalCount"`
-	CaseTotalCount           int        `json:"caseTotalCount"`
-	CaseFinishedCount        int        `json:"caseFinishedCount"`
-	CaseTotalNormTime        int        `json:"caseTotalNormTime"`
-	CaseTotalRegisteredHours int        `json:"caseTotalRegisteredHours"`
+	Items             []wireTask `json:"items"`
+	TotalCount        *int       `json:"totalCount"`
+	CaseTotalCount    int        `json:"caseTotalCount"`
+	CaseFinishedCount int        `json:"caseFinishedCount"`
+	// caseTotalNormTime and caseTotalRegisteredHours are NOT declared. They were,
+	// as int, and nothing read them -- but Kala returns them fractional, so an
+	// unused field was enough to fail every task read on such a case.
+	// encoding/json ignores keys a struct does not declare.
 }
 
 // listTasksBody is the request body. There is no assignee parameter: upstream

@@ -9,6 +9,7 @@ linters:
     - misspell
     - bodyclose     # every http.Response.Body closed
     - forbidigo     # no fmt.Print* in provider code
+    - gosec         # security scan; workflow.md lists it in Stage 1 review scope
 
   settings:
     forbidigo:
@@ -26,6 +27,15 @@ linters:
       - path: _test\.go
         linters:
           - forbidigo
+      # gosec stays ON for tests; only these two rules are silenced there, and
+      # only because both are structural false positives in test code:
+      # G101 flags dummy tokens in httptest mocks ("kauth-token"), and G304
+      # flags layering_test.go reading this repository's own Go files to check
+      # their imports. Neither exists outside _test.go.
+      - path: _test\.go
+        linters:
+          - gosec
+        text: "G101|G304"
 
 formatters:
   enable:

@@ -94,16 +94,20 @@ type CaseDetail struct {
 	Deadline  *time.Time
 
 	// Financial and hour-registration data. Commercially sensitive and
-	// transactional; the provider exposes these only behind an explicit opt-in
-	//, but the client supplies them so that opt-in has something to show.
-	Cost                 int
-	Sales                int
-	Result               int
-	Invoiced             int
-	Uninvoiced           int
-	Realised             int
-	RegisteredHoursTotal int
-	BilledHours          int
+	// transactional; the provider exposes these only behind an explicit opt-in,
+	// but the client supplies them so that opt-in has something to show.
+	//
+	// float64 because Kala returns decimals -- hours in quarter hours, money with
+	// cents. They were declared int until 2026-09-27, which made the WHOLE read
+	// fail on the first fractional value rather than merely truncating it.
+	Cost                 float64
+	Sales                float64
+	Result               float64
+	Invoiced             float64
+	Uninvoiced           float64
+	Realised             float64
+	RegisteredHoursTotal float64
+	BilledHours          float64
 }
 
 // CaseQuery controls a case list read.
@@ -182,14 +186,14 @@ type wireCaseDetail struct {
 	EndDate                 string `json:"endDate"`
 	Deadline                string `json:"deadline"`
 
-	Cost                 int `json:"cost"`
-	Sales                int `json:"sales"`
-	Result               int `json:"result"`
-	Invoiced             int `json:"invoiced"`
-	Uninvoiced           int `json:"uninvoiced"`
-	Realised             int `json:"realised"`
-	RegisteredHoursTotal int `json:"registeredHoursTotal"`
-	BilledHours          int `json:"billedHours"`
+	Cost                 float64 `json:"cost"`
+	Sales                float64 `json:"sales"`
+	Result               float64 `json:"result"`
+	Invoiced             float64 `json:"invoiced"`
+	Uninvoiced           float64 `json:"uninvoiced"`
+	Realised             float64 `json:"realised"`
+	RegisteredHoursTotal float64 `json:"registeredHoursTotal"`
+	BilledHours          float64 `json:"billedHours"`
 }
 
 // listCasesBody is the request body. finishedJobs is pinned to false: it had no
